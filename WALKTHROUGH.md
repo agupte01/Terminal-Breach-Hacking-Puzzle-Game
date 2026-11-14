@@ -1,6 +1,6 @@
-# Terminal Breach — Detailed Walkthrough (v4.0)
+# Terminal Breach — Detailed Walkthrough (v5.0)
 
-Exact command sequences for all **35 levels**. Every sequence in this file is run against the real binary and checked to win cleanly: no wrong logins, no honeypots, and no sentinel catches. The *Peak* column is the highest detection reached on that clean line.
+Exact command sequences for all **45 levels**. Every sequence in this file is run against the real binary and checked to win cleanly: no wrong logins, no honeypots, and no sentinel catches. The *Peak* column is the highest detection reached on that clean line.
 
 > **Spoilers.** Every password is below. Try each level yourself first and use `hint` if you get stuck (from L26 on, hints cost detection).
 
@@ -9,8 +9,9 @@ Exact command sequences for all **35 levels**. Every sequence in this file is ru
 - Each `command` block can be typed exactly as shown. The note beside a step is what you should see.
 - Lines like `connect host` may also be written with the IP. Both work.
 - The inventory is cleared at every level transition, so `combine 1 2 3` always refers to the fragments you saved on that level, in order.
-- **Sentinel sweeps** (L28, L31–L35) count *every* command, including typos and `status`. The sequences below are timed so you are never on a watched host when a sweep fires. If you add or skip a command, check `status` before entering a watched host.
-- Practice any level directly: `TB_START_LEVEL=31 ./terminal_breach` (add `TB_FAST=1` to skip the typing animation).
+- **Sentinel sweeps** (L28, L31–L35, L38–L45) count *every* command, including typos and `status`. The sequences below are timed so you are never on a watched host when a sweep fires. On rotating-sentry levels (L39, L42–L45), `status` shows which host is live now and which is next. If you add or skip a command, check `status` before entering a watched host.
+- `[KEY]` files need `decrypt <file> <key>`. `[ROOT]` files need `su <password>` on that host first. Wrong keys and failed `su` both cost detection.
+- Practice any level directly: `TB_START_LEVEL=41 ./terminal_breach` (add `TB_FAST=1` to skip the typing animation).
 
 ## Quick reference
 
@@ -51,6 +52,16 @@ Exact command sequences for all **35 levels**. Every sequence in this file is ru
 | 33 | [Quantum Ghost](#level-33--quantum-ghost) | EVENT HORIZON | `observer_zero` | `QU4NTUM_GH0ST_C0LL4PSE` | 0% |
 | 34 | [Lazarus Core](#level-34--lazarus-core) | EVENT HORIZON+ | `final_witness` | `L4ZARUS_N3VER_R1SES` | 66% |
 | 35 | [Zero Point](#level-35--zero-point) | ZERO POINT | `GHOST` | `GH0ST_1S_TH3_ARCH1TECT` | 70% |
+| 36 | [Cold Storage](#level-36--cold-storage) | ABYSS | `archivist_9` | `C0LD_K3YS_N3VER_L13` | 0% |
+| 37 | [Root of Trust](#level-37--root-of-trust) | ABYSS | `pki_auditor` | `R00T_0F_TRU5T_BR0KEN` | 0% |
+| 38 | [Pivot Point](#level-38--pivot-point) | ABYSS+ | `red_team_lead` | `P1VOT_THR0UGH_TH3_DMZ` | 0% |
+| 39 | [Carousel](#level-39--carousel) | ABYSS+ | `lens_tech` | `CAR0USEL_0F_F0UR_EYES` | 0% |
+| 40 | [Knock Window](#level-40--knock-window) | ABYSS++ | `port_warden` | `W1ND0W_0F_0PP0RTUN1TY` | 0% |
+| 41 | [Interpol Mesh](#level-41--interpol-mesh) | OBLIVION | `liaison_nine` | `1NTERP0L_R3D_N0T1CE_V01D` | 31% |
+| 42 | [Five Eyes](#level-42--five-eyes) | OBLIVION | `echelon_tap` | `F1VE_EY3S_W1DE_SHUT` | 52% |
+| 43 | [Black Ledger](#level-43--black-ledger) | OBLIVION+ | `ledger_clerk` | `BL4CK_L3DG3R_B4LANC3D_Z3RO` | 60% |
+| 44 | [Mirror Protocol](#level-44--mirror-protocol) | NULL | `mirror_handler` | `N0_M1RR0R_N0_GH0ST_N0_TRAC3` | 79% |
+| 45 | [Null Pointer](#level-45--null-pointer) | NULL POINTER | `architect` | `FR33_GH0ST_SET_T0_NULL` | 76% |
 
 ---
 
@@ -1595,4 +1606,796 @@ login GH0ST_1S_TH3_ARCH1TECT
 
 ---
 
-*Generated from the verified scripts. All 35 levels were also played back-to-back in a single session: 35/35 breached, 0 fails, rank GHOST LEGEND.*
+## Act V — Erasure
+
+Levels 36–45 add manual keys (`decrypt <file> <key>`), per-host root (`su`), link-only topologies, rotating sentries and knock windows that re-seal. They're the longest levels in the game, and the last five use every mechanic at once.
+
+### Level 36 — Cold Storage
+
+**Difficulty:** ABYSS · **Peak detection on this line:** 0%
+
+New: manual keys. [KEY] files keep no key on disk, so you work it out and type `decrypt <file> <key>`. A wrong key prints garbage and costs ¼ per-fail.
+
+| Step | Command | What happens |
+|---:|---|---|
+| 1 | `login archivist_9` | USER access |
+| 2 | `scan` |  |
+| 3 | `connect card-catalog` |  |
+| 4 | `grep drawer catalog.log` | Vigenère = archivist on duty; Caesar = days in a fortnight; rails = basement B5 |
+| 5 | `grep duty catalog.log` | on duty: HALVORSEN |
+| 6 | `grep codename catalog.log` | XOR key = codename backwards; codename FROST, so TSORF |
+| 7 | `connect drawer-a` |  |
+| 8 | `decrypt frag1.vig HALVORSEN` | C0LD_ |
+| 9 | `save C0LD_` |  |
+| 10 | `connect drawer-b` |  |
+| 11 | `decrypt frag2.cz 14` | K3YS_ |
+| 12 | `save K3YS_` |  |
+| 13 | `connect drawer-c` |  |
+| 14 | `decrypt frag3.rail 5` | N3VER_ |
+| 15 | `save N3VER_` |  |
+| 16 | `connect microfiche` | deep-freeze needs this first |
+| 17 | `cat index.txt` |  |
+| 18 | `connect deep-freeze` |  |
+| 19 | `decrypt frag4.xor TSORF` | L13 |
+| 20 | `save L13` |  |
+| 21 | `combine 1 2 3 4` | C0LD_K3YS_N3VER_L13 |
+| 22 | `login C0LD_K3YS_N3VER_L13` | level complete |
+
+<details><summary>Copy-paste version</summary>
+
+```
+login archivist_9
+scan
+connect card-catalog
+grep drawer catalog.log
+grep duty catalog.log
+grep codename catalog.log
+connect drawer-a
+decrypt frag1.vig HALVORSEN
+save C0LD_
+connect drawer-b
+decrypt frag2.cz 14
+save K3YS_
+connect drawer-c
+decrypt frag3.rail 5
+save N3VER_
+connect microfiche
+cat index.txt
+connect deep-freeze
+decrypt frag4.xor TSORF
+save L13
+combine 1 2 3 4
+login C0LD_K3YS_N3VER_L13
+```
+</details>
+
+> **Tip:** `ls` marks key-less files as `[KEY]`. Numeric keys (Caesar, rail) are typed as plain numbers.
+
+### Level 37 — Root of Trust
+
+**Difficulty:** ABYSS · **Peak detection on this line:** 0%
+
+New: `su <password>` gives root on the current host only (the prompt changes to `#`). `[ROOT]` files need it. Follow the chain RA → intermediate CA → root CA → HSM. crl-dist is a honeypot.
+
+| Step | Command | What happens |
+|---:|---|---|
+| 1 | `login pki_auditor` | USER access |
+| 2 | `scan` |  |
+| 3 | `connect ra-server` |  |
+| 4 | `cat onboarding.txt` | root password is on your badge |
+| 5 | `decrypt badge.b64` | ENROLLMENT CODE: enroll-7731 |
+| 6 | `su enroll-7731` | ROOT on ra-server |
+| 7 | `cat ra_vault.txt` | grep the OCSP log for rootpw, skip REVOKED |
+| 8 | `decrypt frag1.hex` | R00T_ |
+| 9 | `save R00T_` |  |
+| 10 | `connect ocsp-responder` |  |
+| 11 | `grep rootpw ocsp.log` | intermediate-ca = M1DCHA1N (root-ca entry is REVOKED) |
+| 12 | `connect intermediate-ca` |  |
+| 13 | `su M1DCHA1N` |  |
+| 14 | `decrypt frag2.atb` | 0F_ |
+| 15 | `save 0F_` |  |
+| 16 | `cat key_note.txt` | SHA + ONE, so SHAONE |
+| 17 | `decrypt anchor.vig SHAONE` | root-ca root password: TRUST-ANCH0R |
+| 18 | `connect root-ca` | needs intermediate-ca first |
+| 19 | `su TRUST-ANCH0R` |  |
+| 20 | `decrypt frag3.rail` | TRU5T_ |
+| 21 | `save TRU5T_` |  |
+| 22 | `decrypt hsm.b64` | hsm-vault root = HSM-0451 |
+| 23 | `connect hsm-vault` |  |
+| 24 | `su HSM-0451` |  |
+| 25 | `decrypt frag4.oni` | Base64 shell |
+| 26 | `decrypt frag4.oni` | reversal: BR0KEN |
+| 27 | `save BR0KEN` |  |
+| 28 | `combine 1 2 3 4` |  |
+| 29 | `login R00T_0F_TRU5T_BR0KEN` | level complete |
+
+<details><summary>Copy-paste version</summary>
+
+```
+login pki_auditor
+scan
+connect ra-server
+cat onboarding.txt
+decrypt badge.b64
+su enroll-7731
+cat ra_vault.txt
+decrypt frag1.hex
+save R00T_
+connect ocsp-responder
+grep rootpw ocsp.log
+connect intermediate-ca
+su M1DCHA1N
+decrypt frag2.atb
+save 0F_
+cat key_note.txt
+decrypt anchor.vig SHAONE
+connect root-ca
+su TRUST-ANCH0R
+decrypt frag3.rail
+save TRU5T_
+decrypt hsm.b64
+connect hsm-vault
+su HSM-0451
+decrypt frag4.oni
+decrypt frag4.oni
+save BR0KEN
+combine 1 2 3 4
+login R00T_0F_TRU5T_BR0KEN
+```
+</details>
+
+> **Tip:** Root is per host. Being root on ra-server does nothing on intermediate-ca.
+
+### Level 38 — Pivot Point
+
+**Difficulty:** ABYSS+ · **Peak detection on this line:** 0%
+
+New: links. Hosts only accept connections from linked neighbours (see topology.txt), so you pivot hop by hop. The jumpbox is watched (sweep every 8). mgmt-vlan is a honeypot.
+
+| Step | Command | What happens |
+|---:|---|---|
+| 1 | `login red_team_lead` | USER access |
+| 2 | `scan` |  |
+| 3 | `connect dmz-mail` |  |
+| 4 | `cat spool.txt` | jumpbox root: morris1988 |
+| 5 | `connect dmz-web` |  |
+| 6 | `decrypt frag1.atb` | P1VOT_ |
+| 7 | `save P1VOT_` |  |
+| 8 | `status` | sweep 1 passes here; a fresh 8-command window starts next |
+| 9 | `connect jumpbox` | watched |
+| 10 | `su morris1988` |  |
+| 11 | `cat jump_notes.txt` | key = BASTION; rails = jumpbox links = 3 |
+| 12 | `decrypt frag2.vig BASTION` | THR0UGH_ |
+| 13 | `connect app-tier` | off the watched host before the sweep |
+| 14 | `save THR0UGH_` |  |
+| 15 | `grep knock app.log` | 179 646 22 |
+| 16 | `connect db-tier` | sweep 2 passes here |
+| 17 | `decrypt frag3.rail 3` | TH3_ |
+| 18 | `save TH3_` |  |
+| 19 | `connect backup-net` |  |
+| 20 | `knock core-switch 179` |  |
+| 21 | `knock core-switch 646` |  |
+| 22 | `knock core-switch 22` | opened |
+| 23 | `connect core-switch` |  |
+| 24 | `decrypt frag4.hex` | DMZ |
+| 25 | `save DMZ` |  |
+| 26 | `combine 1 2 3 4` |  |
+| 27 | `login P1VOT_THR0UGH_TH3_DMZ` | level complete |
+
+<details><summary>Copy-paste version</summary>
+
+```
+login red_team_lead
+scan
+connect dmz-mail
+cat spool.txt
+connect dmz-web
+decrypt frag1.atb
+save P1VOT_
+status
+connect jumpbox
+su morris1988
+cat jump_notes.txt
+decrypt frag2.vig BASTION
+connect app-tier
+save THR0UGH_
+grep knock app.log
+connect db-tier
+decrypt frag3.rail 3
+save TH3_
+connect backup-net
+knock core-switch 179
+knock core-switch 646
+knock core-switch 22
+connect core-switch
+decrypt frag4.hex
+save DMZ
+combine 1 2 3 4
+login P1VOT_THR0UGH_TH3_DMZ
+```
+</details>
+
+> **Tip:** A wrong hop gives NO ROUTE and costs ½ per-fail. Plot the whole path from topology.txt before moving.
+
+### Level 39 — Carousel
+
+**Difficulty:** ABYSS+ · **Peak detection on this line:** 0%
+
+New: a rotating sentry. Every 5 commands a sweep checks ONE camera, in the order north → east → south → west. `status` shows the live camera and the next one. cam-spare is a honeypot.
+
+| Step | Command | What happens |
+|---:|---|---|
+| 1 | `login lens_tech` | USER access |
+| 2 | `scan` |  |
+| 3 | `connect ring-road` |  |
+| 4 | `grep root ring.log` | control-room root: argus-100 |
+| 5 | `connect control-room` | sweep 1 (north) passes |
+| 6 | `su argus-100` |  |
+| 7 | `cat keys.txt` | east shift 6, south rails 3, west key PANOPTES |
+| 8 | `connect ring-road` |  |
+| 9 | `connect cam-north` | sentry is on EAST this window |
+| 10 | `decrypt frag1.oni` | sweep 2 (east): north is safe |
+| 11 | `decrypt frag1.oni` | CAR0USEL_ |
+| 12 | `save CAR0USEL_` |  |
+| 13 | `connect ring-road` |  |
+| 14 | `connect cam-east` | sentry on SOUTH now |
+| 15 | `decrypt frag2.cz 6` | 0F_; sweep 3 (south) passes |
+| 16 | `save 0F_` |  |
+| 17 | `connect ring-road` |  |
+| 18 | `connect cam-south` | sentry on WEST now |
+| 19 | `decrypt frag3.rail 3` | F0UR_ |
+| 20 | `save F0UR_` | sweep 4 (west) passes |
+| 21 | `connect ring-road` |  |
+| 22 | `connect cam-west` | sentry back on NORTH |
+| 23 | `decrypt frag4.vig PANOPTES` | EYES |
+| 24 | `save EYES` |  |
+| 25 | `connect ring-road` | sweep 5 (north) passes |
+| 26 | `combine 1 2 3 4` |  |
+| 27 | `login CAR0USEL_0F_F0UR_EYES` | level complete |
+
+<details><summary>Copy-paste version</summary>
+
+```
+login lens_tech
+scan
+connect ring-road
+grep root ring.log
+connect control-room
+su argus-100
+cat keys.txt
+connect ring-road
+connect cam-north
+decrypt frag1.oni
+decrypt frag1.oni
+save CAR0USEL_
+connect ring-road
+connect cam-east
+decrypt frag2.cz 6
+save 0F_
+connect ring-road
+connect cam-south
+decrypt frag3.rail 3
+save F0UR_
+connect ring-road
+connect cam-west
+decrypt frag4.vig PANOPTES
+save EYES
+connect ring-road
+combine 1 2 3 4
+login CAR0USEL_0F_F0UR_EYES
+```
+</details>
+
+> **Tip:** Rule of thumb: only enter a camera when `status` says it isn't live in this window.
+
+### Level 40 — Knock Window
+
+**Difficulty:** ABYSS++ · **Peak detection on this line:** 0%
+
+New: knock windows. After the last knock, the firewall stays open for only N commands. gate-2 is watched (sweep every 7), and the lighthouse is alarmed (60s). smuggler-cove is a honeypot.
+
+| Step | Command | What happens |
+|---:|---|---|
+| 1 | `login port_warden` | USER access |
+| 2 | `scan` |  |
+| 3 | `connect harbor-log` |  |
+| 4 | `grep gate harbor.log` | gate-1 1111 2222 (window 4), gate-2 3141 5926 5358 (window 3) |
+| 5 | `grep shift harbor.log` | dock-a shift 12 |
+| 6 | `knock gate-1 1111` |  |
+| 7 | `knock gate-1 2222` | open, 4-command window |
+| 8 | `connect gate-1` | inside the window |
+| 9 | `decrypt frag1.oni` | hex shell |
+| 10 | `decrypt frag1.oni` | reversal: W1ND0W_ |
+| 11 | `save W1ND0W_` |  |
+| 12 | `connect dock-a` | linked to gate-1 only |
+| 13 | `decrypt frag2.cz 12` | 0F_ |
+| 14 | `save 0F_` | sweep 2 passes |
+| 15 | `knock gate-2 3141` |  |
+| 16 | `knock gate-2 5926` |  |
+| 17 | `knock gate-2 5358` | open, 3-command window |
+| 18 | `connect gate-2` | watched: 3 commands until the sweep |
+| 19 | `decrypt frag3.rail 3` | 0PP0R |
+| 20 | `cat keeper.txt` | lighthouse root beacon-1849, XOR key KEEPER |
+| 21 | `connect harbor-log` | out just in time; sweep 3 passes |
+| 22 | `save 0PP0R` |  |
+| 23 | `knock lighthouse 1849` |  |
+| 24 | `knock lighthouse 1849` | open, 2-command window |
+| 25 | `connect lighthouse` | TRACE 60s starts |
+| 26 | `su beacon-1849` |  |
+| 27 | `decrypt frag4.xor KEEPER` | TUN1TY |
+| 28 | `save TUN1TY` |  |
+| 29 | `combine 1 2 3 4` |  |
+| 30 | `login W1ND0W_0F_0PP0RTUN1TY` | level complete |
+
+<details><summary>Copy-paste version</summary>
+
+```
+login port_warden
+scan
+connect harbor-log
+grep gate harbor.log
+grep shift harbor.log
+knock gate-1 1111
+knock gate-1 2222
+connect gate-1
+decrypt frag1.oni
+decrypt frag1.oni
+save W1ND0W_
+connect dock-a
+decrypt frag2.cz 12
+save 0F_
+knock gate-2 3141
+knock gate-2 5926
+knock gate-2 5358
+connect gate-2
+decrypt frag3.rail 3
+cat keeper.txt
+connect harbor-log
+save 0PP0R
+knock lighthouse 1849
+knock lighthouse 1849
+connect lighthouse
+su beacon-1849
+decrypt frag4.xor KEEPER
+save TUN1TY
+combine 1 2 3 4
+login W1ND0W_0F_0PP0RTUN1TY
+```
+</details>
+
+> **Tip:** If a window closes on you, knock the whole sequence again. Each re-seal costs ½ per-fail.
+
+### Level 41 — Interpol Mesh
+
+**Difficulty:** OBLIVION · **Peak detection on this line:** 31%
+
+The first Act V combination level: links, two su chains, two manual keys, a bruteforce, a knock, and sweeps every 7 with red-desk watched. The two mirrors are unlabelled honeypots.
+
+| Step | Command | What happens |
+|---:|---|---|
+| 1 | `login liaison_nine` | USER access |
+| 2 | `scan` |  |
+| 3 | `connect notice-db` |  |
+| 4 | `grep DECOY notice.log` | eu-mirror, asia-mirror |
+| 5 | `grep root notice.log` | red-desk root Lyon-1923 |
+| 6 | `grep key notice.log` | XOR key = INTERPOL |
+| 7 | `grep shift notice.log` | founded 1923, so shift 23; sweep 1 passes |
+| 8 | `connect red-desk` | watched: 6 commands until the next sweep |
+| 9 | `su Lyon-1923` |  |
+| 10 | `decrypt frag1.oni` | Base64 |
+| 11 | `decrypt frag1.oni` | reversal |
+| 12 | `decrypt frag1.oni` | hex: 1NTERP0L_ |
+| 13 | `connect archive` | off red-desk before the sweep |
+| 14 | `save 1NTERP0L_` |  |
+| 15 | `decrypt frag2.xor INTERPOL` | R3D_ |
+| 16 | `save R3D_` |  |
+| 17 | `connect vault-17` |  |
+| 18 | `bruteforce` | +50 |
+| 19 | `decrypt notice.locked` | N0T1CE_ |
+| 20 | `save N0T1CE_` |  |
+| 21 | `cat custody.txt` | cipher-room root I24-7 |
+| 22 | `connect cipher-room` |  |
+| 23 | `su I24-7` |  |
+| 24 | `cat routing.txt` | void-gate knock 1923 247 7 |
+| 25 | `knock void-gate 1923` |  |
+| 26 | `knock void-gate 247` |  |
+| 27 | `knock void-gate 7` | opened |
+| 28 | `connect void-gate` |  |
+| 29 | `decrypt frag4.cz 23` | V01D |
+| 30 | `save V01D` |  |
+| 31 | `combine 1 2 3 4` |  |
+| 32 | `login 1NTERP0L_R3D_N0T1CE_V01D` | level complete |
+
+<details><summary>Copy-paste version</summary>
+
+```
+login liaison_nine
+scan
+connect notice-db
+grep DECOY notice.log
+grep root notice.log
+grep key notice.log
+grep shift notice.log
+connect red-desk
+su Lyon-1923
+decrypt frag1.oni
+decrypt frag1.oni
+decrypt frag1.oni
+connect archive
+save 1NTERP0L_
+decrypt frag2.xor INTERPOL
+save R3D_
+connect vault-17
+bruteforce
+decrypt notice.locked
+save N0T1CE_
+cat custody.txt
+connect cipher-room
+su I24-7
+cat routing.txt
+knock void-gate 1923
+knock void-gate 247
+knock void-gate 7
+connect void-gate
+decrypt frag4.cz 23
+save V01D
+combine 1 2 3 4
+login 1NTERP0L_R3D_N0T1CE_V01D
+```
+</details>
+
+### Level 42 — Five Eyes
+
+**Difficulty:** OBLIVION · **Peak detection on this line:** 52%
+
+A rotating sentry over FIVE stations (sweep every 5, order pine-gap → menwith → waihopai → leitrim → yakima). The core has a 3-command knock window, a 90s alarm and an override seal. ghost-station is a honeypot.
+
+| Step | Command | What happens |
+|---:|---|---|
+| 1 | `login echelon_tap` | USER access |
+| 2 | `scan` |  |
+| 3 | `connect leitrim` | sentry on pine-gap this window |
+| 4 | `cat sigint.log` | ECHELON, waihopai root kiwi-0x5, rails 3, core knock 1946 1955 2001 |
+| 5 | `connect menwith` | sweep 1 (pine-gap) passes |
+| 6 | `decrypt frag2.oni` | sentry now on MENWITH: leave before command 10 |
+| 7 | `decrypt frag2.oni` | EY3S_ |
+| 8 | `save EY3S_` |  |
+| 9 | `connect pine-gap` |  |
+| 10 | `decrypt frag1.vig ECHELON` | F1VE_; sweep 2 (menwith) passes |
+| 11 | `save F1VE_` |  |
+| 12 | `connect waihopai` | sentry on WAIHOPAI: 3 commands max |
+| 13 | `su kiwi-0x5` |  |
+| 14 | `decrypt frag3.rail 3` | W1DE_ |
+| 15 | `connect echelon-tap` | out; sweep 3 (waihopai) passes |
+| 16 | `save W1DE_` |  |
+| 17 | `knock ukusa-core 1946` |  |
+| 18 | `knock ukusa-core 1955` |  |
+| 19 | `knock ukusa-core 2001` | open, 3-command window |
+| 20 | `connect ukusa-core` | TRACE 90s |
+| 21 | `override` | +90, unlocks .final |
+| 22 | `decrypt .final` | SHUT |
+| 23 | `save SHUT` |  |
+| 24 | `combine 2 1 3 4` | slot order: EY3S_, F1VE_, W1DE_, SHUT |
+| 25 | `login F1VE_EY3S_W1DE_SHUT` | level complete |
+
+<details><summary>Copy-paste version</summary>
+
+```
+login echelon_tap
+scan
+connect leitrim
+cat sigint.log
+connect menwith
+decrypt frag2.oni
+decrypt frag2.oni
+save EY3S_
+connect pine-gap
+decrypt frag1.vig ECHELON
+save F1VE_
+connect waihopai
+su kiwi-0x5
+decrypt frag3.rail 3
+connect echelon-tap
+save W1DE_
+knock ukusa-core 1946
+knock ukusa-core 1955
+knock ukusa-core 2001
+connect ukusa-core
+override
+decrypt .final
+save SHUT
+combine 2 1 3 4
+login F1VE_EY3S_W1DE_SHUT
+```
+</details>
+
+> **Tip:** Order your saves however you like. `combine` takes slot numbers in the order you want them joined.
+
+### Level 43 — Black Ledger
+
+**Difficulty:** OBLIVION+ · **Peak detection on this line:** 60%
+
+Adaptive detection, rotating tellers (sweep every 6), an always-watched vault corridor, su, a keypad, manual keys, two shell-company honeypots, bruteforce, override and a 75s alarm.
+
+| Step | Command | What happens |
+|---:|---|---|
+| 1 | `login ledger_clerk` | USER access |
+| 2 | `scan` |  |
+| 3 | `connect teller-2` | sentry on teller-1 this window |
+| 4 | `connect back-office` |  |
+| 5 | `connect audit-trail` |  |
+| 6 | `grep DECOY audit.log` | shell-co-a, shell-co-b; sweep 1 passes |
+| 7 | `grep ops audit.log` | back-office root debit-credit, PIN 2^12 = 4096, key SWIFT |
+| 8 | `connect back-office` |  |
+| 9 | `su debit-credit` |  |
+| 10 | `cat routing.txt` | vault knock 1694 1971 2008 (window 3); .zero shift 13 |
+| 11 | `connect teller-1` | sentry on teller-2 this window |
+| 12 | `decrypt frag1.vig SWIFT` | BL4CK_; sweep 2 passes |
+| 13 | `save BL4CK_` | sentry back on teller-1: move |
+| 14 | `connect teller-2` |  |
+| 15 | `unlock ledger.pin 4096` |  |
+| 16 | `decrypt ledger.pin` | L3DG3R_ |
+| 17 | `save L3DG3R_` |  |
+| 18 | `connect back-office` | sweep 3 passes |
+| 19 | `connect clearing` |  |
+| 20 | `bruteforce` | +60 |
+| 21 | `decrypt settle.locked` | Base64 |
+| 22 | `decrypt settle.locked` | reversal |
+| 23 | `decrypt settle.locked` | hex: B4LANC3D_ |
+| 24 | `save B4LANC3D_` | sweep 4 passes |
+| 25 | `connect back-office` |  |
+| 26 | `connect audit-trail` |  |
+| 27 | `wipe` | -30 |
+| 28 | `connect back-office` |  |
+| 29 | `connect clearing` |  |
+| 30 | `knock black-vault 1694` | sweep 5 passes |
+| 31 | `knock black-vault 1971` |  |
+| 32 | `knock black-vault 2008` | open, 3-command window |
+| 33 | `connect vault-corridor` | watched: walk straight through |
+| 34 | `connect black-vault` | TRACE 75s |
+| 35 | `override` | +90 |
+| 36 | `decrypt .zero 13` | Z3RO; sweep 6 passes on the vault |
+| 37 | `save Z3RO` |  |
+| 38 | `combine 1 2 3 4` |  |
+| 39 | `login BL4CK_L3DG3R_B4LANC3D_Z3RO` | level complete |
+
+<details><summary>Copy-paste version</summary>
+
+```
+login ledger_clerk
+scan
+connect teller-2
+connect back-office
+connect audit-trail
+grep DECOY audit.log
+grep ops audit.log
+connect back-office
+su debit-credit
+cat routing.txt
+connect teller-1
+decrypt frag1.vig SWIFT
+save BL4CK_
+connect teller-2
+unlock ledger.pin 4096
+decrypt ledger.pin
+save L3DG3R_
+connect back-office
+connect clearing
+bruteforce
+decrypt settle.locked
+decrypt settle.locked
+decrypt settle.locked
+save B4LANC3D_
+connect back-office
+connect audit-trail
+wipe
+connect back-office
+connect clearing
+knock black-vault 1694
+knock black-vault 1971
+knock black-vault 2008
+connect vault-corridor
+connect black-vault
+override
+decrypt .zero 13
+save Z3RO
+combine 1 2 3 4
+login BL4CK_L3DG3R_B4LANC3D_Z3RO
+```
+</details>
+
+> **Tip:** Three identical commands in a row are free under adaptive detection. The 4th costs extra, so break up long runs.
+
+### Level 44 — Mirror Protocol
+
+**Difficulty:** NULL · **Peak detection on this line:** 79%
+
+MIRROR's own net: rotating dossiers (sweep every 5), an always-watched switchboard, two reflection honeypots, two su chains, three keys, a keypad, bruteforce, a 3-command knock window, override and a 90s alarm. Two attempts.
+
+| Step | Command | What happens |
+|---:|---|---|
+| 1 | `login mirror_handler` | USER access |
+| 2 | `scan` |  |
+| 3 | `connect dossier-b` | sentry on dossier-a |
+| 4 | `connect switchboard` | watched: pass through |
+| 5 | `connect wiretap` | sweep 1 passes |
+| 6 | `grep DECOY tap.log` | reflection-1, reflection-2 |
+| 7 | `grep root tap.log` | switchboard root sw1tchb0ard |
+| 8 | `grep key tap.log` | dossier-a XOR = MI6; .trace = LOOKINGGLASS |
+| 9 | `status` | breaks the grep streak (adaptive); check the sentry |
+| 10 | `grep keypad tap.log` | Orwell's year 1984; rails 4; sweep 2 passes |
+| 11 | `connect switchboard` | watched: 4 commands max |
+| 12 | `su sw1tchb0ard` |  |
+| 13 | `cat routing.txt` | null-room knock 0 0 7 (window 3) |
+| 14 | `connect dossier-a` | sentry on dossier-c this window |
+| 15 | `decrypt frag1.xor MI6` | N0_; sweep 3 passes |
+| 16 | `save N0_` | sentry now on dossier-a: move |
+| 17 | `connect dossier-b` |  |
+| 18 | `decrypt frag2.oni` | Base64 |
+| 19 | `decrypt frag2.oni` | hex |
+| 20 | `decrypt frag2.oni` | Atbash: M1RR0R_; sweep 4 passes |
+| 21 | `save M1RR0R_` | sentry now on dossier-b: move |
+| 22 | `connect dossier-c` |  |
+| 23 | `unlock wanted.pin 1984` |  |
+| 24 | `decrypt wanted.pin 4` | N0_GH0ST_ |
+| 25 | `save N0_GH0ST_` | sweep 5 passes |
+| 26 | `connect switchboard` | watched: pass through |
+| 27 | `connect signals` |  |
+| 28 | `bruteforce` | +70 |
+| 29 | `cat sig.locked` | null-room root segfault-11 |
+| 30 | `knock null-room 0` | sweep 6 passes |
+| 31 | `knock null-room 0` |  |
+| 32 | `knock null-room 7` | open, 3-command window |
+| 33 | `connect null-room` | TRACE 90s |
+| 34 | `override` | +105 |
+| 35 | `su segfault-11` | sweep 7 passes |
+| 36 | `decrypt .trace LOOKINGGLASS` | N0_TRAC3 |
+| 37 | `save N0_TRAC3` |  |
+| 38 | `combine 1 2 3 4` |  |
+| 39 | `login N0_M1RR0R_N0_GH0ST_N0_TRAC3` | level complete |
+
+<details><summary>Copy-paste version</summary>
+
+```
+login mirror_handler
+scan
+connect dossier-b
+connect switchboard
+connect wiretap
+grep DECOY tap.log
+grep root tap.log
+grep key tap.log
+status
+grep keypad tap.log
+connect switchboard
+su sw1tchb0ard
+cat routing.txt
+connect dossier-a
+decrypt frag1.xor MI6
+save N0_
+connect dossier-b
+decrypt frag2.oni
+decrypt frag2.oni
+decrypt frag2.oni
+save M1RR0R_
+connect dossier-c
+unlock wanted.pin 1984
+decrypt wanted.pin 4
+save N0_GH0ST_
+connect switchboard
+connect signals
+bruteforce
+cat sig.locked
+knock null-room 0
+knock null-room 0
+knock null-room 7
+connect null-room
+override
+su segfault-11
+decrypt .trace LOOKINGGLASS
+save N0_TRAC3
+combine 1 2 3 4
+login N0_M1RR0R_N0_GH0ST_N0_TRAC3
+```
+</details>
+
+> **Tip:** A clean run peaks just under 80%. One sweep catch (35) is survivable; two aren't.
+
+### Level 45 — Null Pointer
+
+**Difficulty:** NULL POINTER · **Peak detection on this line:** 76%
+
+The finale. Log in as what you were before GHOST. Registers rotate the sentry (sweep every 4), the kernel is always watched, three dangling pointers are honeypots, and the null page has a 2-command knock window and a 120s alarm. Five fragments, two attempts.
+
+| Step | Command | What happens |
+|---:|---|---|
+| 1 | `login architect` | USER access: the Architect's own name |
+| 2 | `scan` |  |
+| 3 | `connect stack` |  |
+| 4 | `grep frame stack.log` | every clue: decoys, ring0, MALLOC, 0451, rails 3, shift 8, knock 0 0 0 0, DEREFERENCE |
+| 5 | `connect register-a` | sweep 1 passed; sentry on register-b |
+| 6 | `decrypt frag1.xor MALLOC` | FR33_ |
+| 7 | `save FR33_` |  |
+| 8 | `connect stack` | sweep 2 (register-b) passes |
+| 9 | `connect register-b` | sentry on register-c now |
+| 10 | `decrypt frag2.oni` | 1/4 |
+| 11 | `decrypt frag2.oni` | 2/4 |
+| 12 | `decrypt frag2.oni` | 3/4; sweep 3 passes |
+| 13 | `connect register-c` | sentry on register-a now |
+| 14 | `unlock set.pin 0451` |  |
+| 15 | `decrypt set.pin 3` | SET_ |
+| 16 | `save SET_` | sweep 4 passes |
+| 17 | `connect register-b` | sentry on register-b: one peel, then out |
+| 18 | `decrypt frag2.oni` | 4/4: GH0ST_ |
+| 19 | `connect stack` |  |
+| 20 | `save GH0ST_` | sweep 5 passes |
+| 21 | `connect kernel` | always watched: 3 commands |
+| 22 | `su ring0` |  |
+| 23 | `decrypt frag4.cz 8` | T0_ |
+| 24 | `connect syscall` | out; sweep 6 passes |
+| 25 | `save T0_` |  |
+| 26 | `bruteforce` | +70 |
+| 27 | `cat syscall.locked` | null root segv-0xb |
+| 28 | `knock null 0` | sweep 7 passes |
+| 29 | `knock null 0` |  |
+| 30 | `knock null 0` |  |
+| 31 | `status` | breaks the repeat streak before the 4th knock |
+| 32 | `knock null 0` | open, 2-command window; sweep 8 passes |
+| 33 | `connect null` | TRACE 120s |
+| 34 | `override` | +105 |
+| 35 | `su segv-0xb` |  |
+| 36 | `decrypt .eof DEREFERENCE` | NULL; sweep 9 passes |
+| 37 | `save NULL` |  |
+| 38 | `combine 1 3 2 4 5` | slot order: FR33_, SET_, GH0ST_, T0_, NULL |
+| 39 | `login FR33_GH0ST_SET_T0_NULL` | GAME COMPLETE |
+
+<details><summary>Copy-paste version</summary>
+
+```
+login architect
+scan
+connect stack
+grep frame stack.log
+connect register-a
+decrypt frag1.xor MALLOC
+save FR33_
+connect stack
+connect register-b
+decrypt frag2.oni
+decrypt frag2.oni
+decrypt frag2.oni
+connect register-c
+unlock set.pin 0451
+decrypt set.pin 3
+save SET_
+connect register-b
+decrypt frag2.oni
+connect stack
+save GH0ST_
+connect kernel
+su ring0
+decrypt frag4.cz 8
+connect syscall
+save T0_
+bruteforce
+cat syscall.locked
+knock null 0
+knock null 0
+knock null 0
+status
+knock null 0
+connect null
+override
+su segv-0xb
+decrypt .eof DEREFERENCE
+save NULL
+combine 1 3 2 4 5
+login FR33_GH0ST_SET_T0_NULL
+```
+</details>
+
+> **Tip:** This sequence peaks at 76% detection. You can afford roughly one mistake.
+
+---
+
+*Generated from the verified scripts. All 45 levels were also played back-to-back in a single session: 45/45 breached, 0 fails, 0 sweep catches, rank GHOST LEGEND, 1,026,085 points.*

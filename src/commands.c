@@ -19,6 +19,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <strings.h>
 #include <time.h>
 
 #define GRN  "\033[1;32m"
@@ -48,6 +49,45 @@ static void detection_add(GameState *gs, int amount) {
         printf(RED "  All traffic logged. Session terminated.\n\n" RST);
         gs->game_over = 1;
     }
+}
+
+/* Has the player gained root ('su') on node ni this level? */
+static int has_root(GameState *gs, int ni) { return (gs->su_mask >> ni) & 1; }
+
+/* Sentry rotation: which watch_slot is live for command number cmdnum.
+   Commands (s-1)*I+1 .. s*I lead up to sweep s; the slots take turns. */
+static int live_slot(Level *l, int cmdnum) {
+    if (l->sweep_interval <= 0 || l->watch_cycle <= 0) return 0;
+    return ((cmdnum - 1) / l->sweep_interval) % l->watch_cycle + 1;
+}
+
+/* Is node ni watched for the given command number? Always-watched hosts
+   use is_watched; rotating hosts are watched only on their slot. */
+static int watched_at(Level *l, int ni, int cmdnum) {
+    NetworkNode *n = &l->nodes[ni];
+    if (n->is_watched) return 1;
+    return n->watch_slot && n->watch_slot == live_slot(l, cmdnum);
+}
+
+/* Shared access check for anything that reads a file: tier, per-host root,
+   then lock. Prints the reason and returns 0 when access is refused. */
+static int file_access_ok(GameState *gs, int idx, GameFile *f, const char *fname) {
+    if (f->min_perm > gs->permission) {
+        printf(RED "[!] PERMISSION DENIED -- %s requires elevated access.\n" RST, fname);
+        return 0;
+    }
+    if (f->needs_root && !has_root(gs, gs->current_node)) {
+        printf(RED "[!] PERMISSION DENIED -- %s is root-only. Use: su <password>\n" RST, fname);
+        return 0;
+    }
+    if (f->locked && !is_file_unlocked(gs, gs->current_node, idx)) {
+        if (f->unlock_code[0])
+            printf(RED "[!] KEYPAD LOCKED -- use: unlock %s <code>\n" RST, fname);
+        else
+            printf(RED "[!] PERMISSION DENIED -- %s is locked.\n" RST, fname);
+        return 0;
+    }
+    return 1;
 }
 
 /* Prints all commands currently available at the active level. The bitmask
@@ -80,6 +120,8 @@ void cmd_help(GameState *gs) {
     if (c & CMD_KNOCK)      printf(GRN "│" RST " %-22s %s\n", "knock <host> <port>","Port-knock a filtered host");
     if (c & CMD_UNLOCK)     printf(GRN "│" RST " %-22s %s\n", "unlock <file> <pin>","Enter a keypad code on a file");
     if (c & CMD_WIPE)       printf(GRN "│" RST " %-22s %s\n", "wipe",              "Scrub logs on this node (once)");
+    if (c & CMD_SU)         printf(GRN "│" RST " %-22s %s\n", "su <password>",     "Become root on this host only");
+    if (c & CMD_DECRYPT)    printf(GRN "│" RST " %-22s %s\n", "decrypt <f> <key>", "Supply a key for [KEY] files");
     if (c & CMD_EXIT)       printf(GRN "│" RST " %-22s %s\n", "exit",              "Quit the game");
     printf(GRN "└──────────────────────────────────────────────────────────┘\n" RST);
 }
@@ -106,7 +148,14 @@ void cmd_ls(GameState *gs, const char *flags) {
         }
 
         int decrypted = is_file_decrypted(gs, gs->current_node, i);
-        if (f->puzzle_type == PUZZLE_ONION && !decrypted)
+        if (f->needs_root && !has_root(gs, gs->current_node)) {
+            printf(RED "  [ROOT] %s\n" RST, f->name);
+            shown++;
+            continue;
+        }
+        if (f->manual_key && !decrypted)
+            printf(YEL "  [KEY]  %s\n" RST, f->name);
+        else if (f->puzzle_type == PUZZLE_ONION && !decrypted)
             printf(YEL "  [ONI %d/%d]  %s\n" RST,
                    gs->file_layers[gs->current_node][i],
                    onion_layer_count(f->cipher_key), f->name);
@@ -139,18 +188,7 @@ void cmd_cat(GameState *gs, const char *filename) {
         return;
     }
     GameFile *f = &node->files[idx];
-
-    if (f->min_perm > gs->permission) {
-        printf(RED "[!] PERMISSION DENIED -- %s requires elevated access.\n" RST, filename);
-        return;
-    }
-    if (f->locked && !is_file_unlocked(gs, gs->current_node, idx)) {
-        if (f->unlock_code[0])
-            printf(RED "[!] KEYPAD LOCKED -- use: unlock %s <code>\n" RST, filename);
-        else
-            printf(RED "[!] PERMISSION DENIED -- %s is locked.\n" RST, filename);
-        return;
-    }
+    if (!file_access_ok(gs, idx, f, filename)) return;
 
     printf(DIM "-- %s " RST, filename);
     print_separator();
@@ -165,7 +203,10 @@ void cmd_cat(GameState *gs, const char *filename) {
                peeled, onion_layer_count(f->cipher_key), filename);
     } else if (f->encrypted && !decrypted) {
         printf("%s\n", f->content);
-        printf(YEL "[!] File is encrypted. Use: decrypt %s\n" RST, filename);
+        if (f->manual_key)
+            printf(YEL "[!] No key on disk. Find it, then: decrypt %s <key>\n" RST, filename);
+        else
+            printf(YEL "[!] File is encrypted. Use: decrypt %s\n" RST, filename);
     } else if (f->encrypted && decrypted) {
         char buf[MAX_CONTENT];
         decode_content(f, buf, MAX_CONTENT);
@@ -222,10 +263,36 @@ void cmd_status(GameState *gs) {
         if (tr < 0) tr = 0;
         printf(CYN "│" RST " Trace      : " RED "%d seconds to lock-on" RST "\n", tr);
     }
-    if (l->sweep_interval > 0)
+    if (l->sweep_interval > 0) {
+        int nextcmd = gs->level_cmds + 1;
         printf(CYN "│" RST " Sentinel   : sweep in " YEL "%d" RST " command(s)%s\n",
                l->sweep_interval - (gs->level_cmds % l->sweep_interval),
-               node->is_watched ? RED "  [YOU ARE ON A WATCHED HOST]" RST : "");
+               watched_at(l, gs->current_node, nextcmd) ? RED "  [YOU ARE ON A WATCHED HOST]" RST : "");
+        if (l->watch_cycle > 0) {
+            int now = live_slot(l, nextcmd);
+            int after = live_slot(l, nextcmd + l->sweep_interval);
+            for (int i = 0; i < l->node_count; i++) {
+                if (l->nodes[i].watch_slot == now)
+                    printf(CYN "│" RST " Sentry now : " RED "%s" RST "\n", l->nodes[i].hostname);
+                if (l->nodes[i].watch_slot == after)
+                    printf(CYN "│" RST " Sentry next: %s\n", l->nodes[i].hostname);
+            }
+        }
+    }
+    for (int i = 0; i < l->node_count; i++) {
+        NetworkNode *kn = &l->nodes[i];
+        if (kn->knock_window > 0 && ((gs->knock_open >> i) & 1)) {
+            int left = kn->knock_window - (gs->level_cmds + 1 - gs->knock_open_at[i]);
+            printf(CYN "│" RST " Knock open : %s, %d command(s) left in window\n",
+                   kn->hostname, left < 0 ? 0 : left);
+        }
+    }
+    if (gs->su_mask) {
+        printf(CYN "│" RST " Root on    :");
+        for (int i = 0; i < l->node_count; i++)
+            if (has_root(gs, i)) printf(" %s", l->nodes[i].hostname);
+        printf("\n");
+    }
     if (l->adaptive_detection)
         printf(CYN "│" RST " Adaptive   : repeat streak %d\n", gs->repeat_streak);
 
@@ -333,9 +400,10 @@ void cmd_logout(GameState *gs) {
    decrypted flag is set in GameState so subsequent 'cat' calls show plaintext
    directly. The decoding method name is printed to give the player feedback
    about which puzzle type they just solved. */
-void cmd_decrypt(GameState *gs, const char *filename) {
-    if (!filename || !filename[0]) {
-        printf(RED "[!] Usage: decrypt <filename>\n" RST);
+void cmd_decrypt(GameState *gs, const char *args) {
+    char filename[MAX_FILENAME] = {0}, key[64] = {0};
+    if (!args || sscanf(args, "%63s %63s", filename, key) < 1) {
+        printf(RED "[!] Usage: decrypt <filename> [key]\n" RST);
         return;
     }
     NetworkNode *node = get_current_node(gs);
@@ -346,18 +414,7 @@ void cmd_decrypt(GameState *gs, const char *filename) {
         return;
     }
     GameFile *f = &node->files[idx];
-
-    if (f->min_perm > gs->permission) {
-        printf(RED "[!] PERMISSION DENIED -- %s requires elevated access.\n" RST, filename);
-        return;
-    }
-    if (f->locked && !is_file_unlocked(gs, gs->current_node, idx)) {
-        if (f->unlock_code[0])
-            printf(RED "[!] KEYPAD LOCKED -- use: unlock %s <code>\n" RST, filename);
-        else
-            printf(RED "[!] PERMISSION DENIED -- %s is locked.\n" RST, filename);
-        return;
-    }
+    if (!file_access_ok(gs, idx, f, filename)) return;
     if (!f->encrypted) {
         printf(YEL "[!] %s is not encrypted.\n" RST, filename);
         return;
@@ -399,6 +456,46 @@ void cmd_decrypt(GameState *gs, const char *filename) {
             printf(YEL "[DEC] Another shell underneath (%d left). decrypt again.\n" RST,
                    total - peeled - 1);
         }
+        return;
+    }
+
+    /* Manual-key files: the key is not stored on disk, the player must find
+       it. A wrong key still "decodes" -- into garbage -- so it looks real. */
+    if (f->manual_key) {
+        if (!key[0]) {
+            printf(YEL "[!] %s has no key on disk. Use: decrypt %s <key>\n" RST, filename, filename);
+            return;
+        }
+        char expect[64];
+        int numeric = (f->puzzle_type == PUZZLE_CAESAR || f->puzzle_type == PUZZLE_RAIL);
+        if (numeric) snprintf(expect, sizeof(expect), "%d", f->cipher_shift);
+        else         snprintf(expect, sizeof(expect), "%s", f->cipher_key);
+        printf(GRN "[DEC] Applying supplied key to %s...\n" RST, filename);
+        slow_print("[DEC] Running decode...", 20);
+        if (strcasecmp(key, expect) != 0) {
+            char junk[MAX_CONTENT];
+            switch (f->puzzle_type) {
+            case PUZZLE_CAESAR:   puzzle_caesar(f->content, junk, MAX_CONTENT, atoi(key)); break;
+            case PUZZLE_RAIL:     puzzle_rail(f->content, junk, MAX_CONTENT, atoi(key)); break;
+            case PUZZLE_XOR:      puzzle_xor(f->content, junk, MAX_CONTENT, key); break;
+            default:              puzzle_vigenere(f->content, junk, MAX_CONTENT, key); break;
+            }
+            for (char *p = junk; *p; p++)
+                if ((unsigned char)*p < 32 || (unsigned char)*p > 126) *p = '?';
+            print_separator();
+            printf("%s\n", junk);
+            print_separator();
+            printf(RED "[!] Output fails plausibility check -- wrong key.\n" RST);
+            detection_add(gs, cur_level(gs)->detection_per_fail / 4);
+            return;
+        }
+        char buf[MAX_CONTENT];
+        decode_content(f, buf, MAX_CONTENT);
+        set_decrypted(gs, gs->current_node, idx);
+        printf(GRN "[+] KEY ACCEPTED -- %s decoded.\n" RST, filename);
+        print_separator();
+        printf("%s\n", buf);
+        print_separator();
         return;
     }
 
@@ -529,6 +626,36 @@ void cmd_connect(GameState *gs, const char *target) {
         return;
     }
 
+    /* Link topology: some hosts accept sessions only from specific
+       neighbouring hosts, so the player has to pivot through them. */
+    if (l->nodes[node_i].link_from[0]) {
+        const char *cur = l->nodes[gs->current_node].hostname;
+        char list[96];
+        strncpy(list, l->nodes[node_i].link_from, sizeof(list) - 1);
+        list[sizeof(list) - 1] = '\0';
+        int linked = 0;
+        for (char *t = strtok(list, ","); t; t = strtok(NULL, ","))
+            if (strcmp(t, cur) == 0) { linked = 1; break; }
+        if (!linked) {
+            printf(RED "[!] NO ROUTE -- %s has no link to %s.\n" RST,
+                   cur, l->nodes[node_i].hostname);
+            detection_add(gs, l->detection_per_fail / 2);
+            return;
+        }
+    }
+
+    /* Knock windows: an opened firewall re-seals after knock_window
+       commands. The current command is number level_cmds + 1. */
+    if (l->nodes[node_i].knock_window > 0 && ((gs->knock_open >> node_i) & 1) &&
+        gs->level_cmds + 1 - gs->knock_open_at[node_i] > l->nodes[node_i].knock_window) {
+        gs->knock_open &= ~(1 << node_i);
+        gs->knock_progress[node_i] = 0;
+        printf(RED "[!] FIREWALL RE-SEALED -- %s's knock window (%d commands) expired. Knock again.\n" RST,
+               l->nodes[node_i].hostname, l->nodes[node_i].knock_window);
+        detection_add(gs, l->detection_per_fail / 2);
+        return;
+    }
+
     /* Port-knock gate: the host's firewall drops everything until the
        player has knocked the full port sequence with 'knock'. */
     if (l->nodes[node_i].knock_seq[0] && !((gs->knock_open >> node_i) & 1)) {
@@ -574,6 +701,9 @@ void cmd_connect(GameState *gs, const char *target) {
 
     if (l->nodes[node_i].is_watched)
         printf(YEL "[!] SENTINEL-WATCHED HOST -- do not linger here during a sweep.\n" RST);
+    else if (watched_at(l, node_i, gs->level_cmds + 1))
+        printf(YEL "[!] ROTATING SENTRY IS LOOKING THROUGH %s RIGHT NOW -- leave before the sweep.\n" RST,
+               l->nodes[node_i].hostname);
 
     /* Silent alarm: the first touch of a tripwired host starts a trace
        countdown that keeps running for the rest of the level. */
@@ -745,14 +875,7 @@ void cmd_grep(GameState *gs, const char *args) {
     int idx = find_file_index(node, filename);
     if (idx < 0) { printf(RED "[!] FILE NOT FOUND: %s\n" RST, filename); return; }
     GameFile *f = &node->files[idx];
-    if (f->min_perm > gs->permission) {
-        printf(RED "[!] PERMISSION DENIED -- %s requires elevated access.\n" RST, filename);
-        return;
-    }
-    if (f->locked && !is_file_unlocked(gs, gs->current_node, idx)) {
-        printf(RED "[!] PERMISSION DENIED -- %s is locked.\n" RST, filename);
-        return;
-    }
+    if (!file_access_ok(gs, idx, f, filename)) return;
 
     char buf[MAX_CONTENT];
     if (f->encrypted && is_file_decrypted(gs, gs->current_node, idx))
@@ -896,6 +1019,10 @@ void cmd_knock(GameState *gs, const char *args) {
                nd->hostname, port, gs->knock_progress[ni], np);
         if (gs->knock_progress[ni] >= np) {
             gs->knock_open |= (1 << ni);
+            gs->knock_open_at[ni] = gs->level_cmds + 1;
+            if (nd->knock_window > 0)
+                printf(YEL "[KNK] Window: %d command(s) to connect before it re-seals.\n" RST,
+                       nd->knock_window);
             printf(GRN "[KNK] Sequence complete -- %s firewall opened. connect now.\n" RST,
                    nd->hostname);
         }
@@ -924,6 +1051,10 @@ void cmd_unlock(GameState *gs, const char *args) {
         printf(RED "[!] PERMISSION DENIED -- %s requires elevated access.\n" RST, fname);
         return;
     }
+    if (f->needs_root && !has_root(gs, gs->current_node)) {
+        printf(RED "[!] PERMISSION DENIED -- keypad on %s is root-only. Use: su <password>\n" RST, fname);
+        return;
+    }
     if (!f->locked || !f->unlock_code[0]) {
         printf(YEL "[!] %s has no keypad.\n" RST, fname);
         return;
@@ -943,6 +1074,32 @@ void cmd_unlock(GameState *gs, const char *args) {
     printf(RED "[!] INVALID CODE -- keypad tamper counter: %d. Penalty +%d.\n" RST,
            gs->keypad_fails, cost);
     detection_add(gs, cost);
+}
+
+/* Gains root on the current host only. Root is per host and per level:
+   it unlocks [ROOT] files here and nowhere else. */
+void cmd_su(GameState *gs, const char *pass) {
+    Level       *l    = cur_level(gs);
+    NetworkNode *node = get_current_node(gs);
+    if (!pass || !pass[0]) {
+        printf(RED "[!] Usage: su <password>\n" RST);
+        return;
+    }
+    if (!node->su_pass[0]) {
+        printf(DIM "su: no privileged account on %s.\n" RST, node->hostname);
+        return;
+    }
+    if (has_root(gs, gs->current_node)) {
+        printf(DIM "su: already root on %s.\n" RST, node->hostname);
+        return;
+    }
+    if (strcmp(pass, node->su_pass) == 0) {
+        gs->su_mask |= (1 << gs->current_node);
+        printf(GRN "[+] ROOT on %s -- root-only files now readable here.\n" RST, node->hostname);
+        return;
+    }
+    printf(RED "su: Authentication failure (logged).\n" RST);
+    detection_add(gs, l->detection_per_fail / 2);
 }
 
 /* Scrubs the current node's logs once, buying back one failure's worth of
@@ -997,7 +1154,7 @@ static const char *all_cmd_names[] = {
     "help","ls","cat","clear","whoami","status","hint",
     "login","logout","decrypt","save","inventory",
     "scan","connect","bruteforce","override","savegame","loadgame",
-    "grep","combine","drop","knock","unlock","wipe",
+    "grep","combine","drop","knock","unlock","wipe","su",
     "exit","quit", NULL
 };
 
@@ -1017,18 +1174,26 @@ static void dispatch(GameState *gs, const char *cmd, const char *arg);
 /* Runs a sentinel sweep tick after each command on levels that have one. */
 static void sentinel_tick(GameState *gs) {
     Level *l = cur_level(gs);
-    if (l->sweep_interval <= 0 || gs->game_over || gs->level_complete) return;
-    gs->level_cmds++;
+    if (gs->game_over || gs->level_complete) return;
+    gs->level_cmds++;                      /* also drives knock windows */
+    if (l->sweep_interval <= 0) return;
     NetworkNode *node = get_current_node(gs);
+    int here_watched = watched_at(l, gs->current_node, gs->level_cmds);
     int left = l->sweep_interval - (gs->level_cmds % l->sweep_interval);
     if (gs->level_cmds % l->sweep_interval == 0) {
-        if (node->is_watched) {
+        if (here_watched) {
             printf(RED "\n  [SENTINEL] Sweep caught you on %s!\n" RST, node->hostname);
             detection_add(gs, l->detection_per_fail);
         } else {
             printf(DIM "  [SENTINEL] Sweep passed overhead... clean.\n" RST);
         }
-    } else if (left == 1 && node->is_watched) {
+        if (l->watch_cycle > 0) {
+            int next = live_slot(l, gs->level_cmds + 1);
+            for (int i = 0; i < l->node_count; i++)
+                if (l->nodes[i].watch_slot == next)
+                    printf(DIM "  [SENTINEL] Sentry rotates to %s.\n" RST, l->nodes[i].hostname);
+        }
+    } else if (left == 1 && here_watched) {
         printf(YEL "  [SENTINEL] Sweep imminent -- next command triggers it. MOVE.\n" RST);
     }
 }
@@ -1127,6 +1292,7 @@ static void dispatch(GameState *gs, const char *cmd, const char *arg) {
     else if (strcmp(cmd, "knock")      == 0 && (cmds & CMD_KNOCK))      { cmd_knock(gs, arg);       return; }
     else if (strcmp(cmd, "unlock")     == 0 && (cmds & CMD_UNLOCK))     { cmd_unlock(gs, arg);      return; }
     else if (strcmp(cmd, "wipe")       == 0 && (cmds & CMD_WIPE))       { cmd_wipe(gs);             return; }
+    else if (strcmp(cmd, "su")         == 0 && (cmds & CMD_SU))         { cmd_su(gs, arg);          return; }
     else if (strcmp(cmd, "exit") == 0 || strcmp(cmd, "quit") == 0) {
         printf(YEL "[SYS] Terminating session. Stay ghosted.\n" RST);
         exit(0);

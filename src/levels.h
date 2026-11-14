@@ -17,12 +17,12 @@
 #define MAX_FILES       12
 #define MAX_FILENAME    64
 #define MAX_CONTENT     1024
-#define MAX_NODES        8
+#define MAX_NODES       12
 #define MAX_NODE_IP     20
 #define MAX_NODE_NAME   32
 #define MAX_LEVEL_NAME  80
 #define MAX_HINT        512
-#define TOTAL_LEVELS    35
+#define TOTAL_LEVELS    45
 #define MAX_INV_ITEMS   30
 #define MAX_INV_LEN    256
 
@@ -76,6 +76,7 @@ typedef enum { PERM_GUEST = 0, PERM_USER = 1, PERM_ADMIN = 2 } Permission;
 #define CMD_KNOCK       (1u << 22)
 #define CMD_UNLOCK      (1u << 23)
 #define CMD_WIPE        (1u << 24)
+#define CMD_SU          (1u << 25)
 
 /* Convenience bundle for the commands every level provides from the start. */
 #define CMD_BASIC (CMD_HELP|CMD_LS|CMD_CAT|CMD_CLEAR|CMD_WHOAMI|CMD_STATUS|CMD_EXIT)
@@ -95,6 +96,8 @@ typedef struct {
     int        locked;       /* if 1, inaccessible until a condition is met    */
     char       cipher_key[64];/* key for XOR / Vigenère, or ONION layer spec    */
     char       unlock_code[16];/* if set, 'unlock <file> <code>' opens the lock */
+    int        manual_key;    /* v5: key not on disk -- 'decrypt <file> <key>'  */
+    int        needs_root;    /* v5: readable only after 'su' on this host       */
 } GameFile;
 
 /* A network node — a machine within a level's topology. The entry node is
@@ -115,6 +118,10 @@ typedef struct {
     int       has_logs;    /* 'wipe' can scrub this node's logs once           */
     int       trip_seconds;/* connecting starts a trace countdown (silent alarm)*/
     char      knock_seq[48]; /* space-separated ports; must 'knock' before connect */
+    char      su_pass[32];   /* v5: 'su <pass>' grants root on this host          */
+    char      link_from[96]; /* v5: comma list -- only reachable from these hosts */
+    int       watch_slot;    /* v5: 1..watch_cycle -- watched on that rotation   */
+    int       knock_window;  /* v5: knock stays open this many commands          */
 } NetworkNode;
 
 /* All data that defines one level — its narrative context, network topology,
@@ -147,6 +154,7 @@ typedef struct {
     int  adaptive_detection;     /* if 1, repeated commands cost more       */
     int  sweep_interval;         /* sentinel sweep every N commands (0=off) */
     int  hint_cost;              /* detection charged for using 'hint'      */
+    int  watch_cycle;            /* v5: rotating sentry, nodes use watch_slot */
 
     /* Data-driven targets for bruteforce/override. When bf_node is set the
        player must be on that host or the attempt is refused (not consumed). */
@@ -197,6 +205,8 @@ typedef struct {
     time_t trace_deadline;                  /* 0 = no silent-alarm trace running   */
     unsigned char file_layers[MAX_NODES][MAX_FILES]; /* onion layers peeled    */
     int    load_pending;                    /* loadgame: restart at current_level  */
+    int    su_mask;                         /* v5: hosts the player has root on    */
+    int    knock_open_at[MAX_NODES];        /* v5: command number a knock completed */
 
     int    total_fails;
     int    total_commands;

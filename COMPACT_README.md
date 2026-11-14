@@ -1,6 +1,6 @@
-# Terminal Breach v4.0 — Compact Reference
+# Terminal Breach v5.0 — Compact Reference
 
-35 levels · 4 acts · pure C11 · zero warnings. Full guide: [README.md](README.md) · Solutions: [WALKTHROUGH.md](WALKTHROUGH.md)
+45 levels · 5 acts · pure C11 · zero warnings. Full guide: [README.md](README.md) · Solutions: [WALKTHROUGH.md](WALKTHROUGH.md)
 
 ## Build & Run
 ```bash
@@ -13,7 +13,7 @@ TB_START_LEVEL=26 TB_FAST=1 ./terminal_breach   # jump to a level, no typing del
 |---|---|
 | `main.c` | game loop, level transitions (inventory purge), win/loss screens, score |
 | `commands.c/h` | every command handler, sentinel sweep tick, trace check, dispatcher |
-| `levels.c/h` | 35 level definitions, all structs, file/node macros |
+| `levels.c/h` | 45 level definitions, all structs, file/node macros |
 | `network.c/h` | node lookup, file unlock/decrypt bitmasks |
 | `puzzles.c/h` | Caesar, reverse, binary, hex, XOR, Vigenère, Base64, Atbash, rail fence, onion |
 | `utils.c/h` | detection bar, prompt with `[T-n]`/`[TRACE n]`, briefings, `slow_print` |
@@ -35,18 +35,21 @@ TB_START_LEVEL=26 TB_FAST=1 ./terminal_breach   # jump to a level, no typing del
 | `wipe` | L26 | once per log host: −1× per-fail |
 | `knock <host> <port>` | L27 | wrong port resets sequence, ½ per-fail |
 | `unlock <file> <code>` | L28 | wrong codes escalate: ½, 1, 1½ … × per-fail |
+| `decrypt <file> <key>` | L36 | `[KEY]` files; wrong key = garbage + ¼ |
+| `su <password>` | L36 | root on THIS host only (prompt `#`), opens `[ROOT]` files; fail ½ |
 
 ## Detection Costs
 | Event | Cost |
 |---|---|
 | wrong login | 1× per-fail |
 | unknown / locked command | ¼ |
-| bad connect target, insufficient tier, filtered host, wrong knock | ½ |
+| bad connect target, insufficient tier, filtered host, wrong knock, NO ROUTE, re-sealed window, failed su | ½ |
+| wrong manual key | ¼ |
 | routing rejected | 1× |
 | honeypot connect | 2× |
 | sentinel sweep catches you on a watched host | 1× |
 | bruteforce / override | 2× / 3× |
-| adaptive repeat (L25, L32, L34, L35) | +1, +2, +3 … from the 4th identical command in a row |
+| adaptive repeat (L25, L32, L34, L35, L43–L45) | +1, +2, +3 … from the 4th identical command in a row |
 
 ## Cipher Families
 | Type | First | Decode |
@@ -65,6 +68,13 @@ TB_START_LEVEL=26 TB_FAST=1 ./terminal_breach   # jump to a level, no typing del
 - **Port knocking:** FILTERED hosts need `knock` in exact order before `connect`.
 - **Keypads:** `[PIN]` files. Codes come from `grep` on logs and riddles.
 - **Onion progress persists:** split a long peel across two visits to dodge a sweep.
+
+## Act V Mechanics (L36–L45)
+- **Manual keys:** `[KEY]` files keep no key on disk. Find it, then `decrypt <file> <key>`.
+- **Per-host root:** `su <pw>` works on the current host only. Root passwords hide on *other* hosts.
+- **Links:** hosts with a link list only accept connections from those neighbours. Read the link map first.
+- **Rotating sentry:** each sweep watches the next host in a fixed order. `status` shows now and next.
+- **Knock windows:** an opened firewall re-seals after N commands, and `status` counts down.
 
 ## Level Table
 | # | Level | Diff | Max/Fail | Timer | Special |
@@ -104,9 +114,19 @@ TB_START_LEVEL=26 TB_FAST=1 ./terminal_breach   # jump to a level, no typing del
 | 33 | Quantum Ghost | EVENT HORIZON | 120/30 | 300 | trip 75s, riddle PIN |
 | 34 | Lazarus Core | EVENT HORIZON+ | 180/30 | 300 | everything, 2 attempts |
 | 35 | Zero Point | ZERO POINT | 200/35 | 360 | sweeps /5, trip 90s |
+| 36 | Cold Storage | ABYSS | 120/25 | 420 | 4 manual keys |
+| 37 | Root of Trust | ABYSS | 130/25 | 450 | su chain |
+| 38 | Pivot Point | ABYSS+ | 130/25 | 480 | links, watched jumpbox |
+| 39 | Carousel | ABYSS+ | 140/25 | 480 | rotating sentry x4 |
+| 40 | Knock Window | ABYSS++ | 140/25 | 480 | re-sealing knocks, trip 60s |
+| 41 | Interpol Mesh | OBLIVION | 160/25 | 540 | links, 2 su, bruteforce |
+| 42 | Five Eyes | OBLIVION | 170/30 | 540 | rotation x5, override, trip 90s |
+| 43 | Black Ledger | OBLIVION+ | 200/30 | 600 | everything, adaptive |
+| 44 | Mirror Protocol | NULL | 220/35 | 600 | everything, 2 attempts |
+| 45 | Null Pointer | NULL POINTER | 230/35 | 720 | everything, finale |
 
 ## Score & Rank
-`level score = level# × 1000 − fails × 100 − detection × 5` (min 0). Max 630,000; verified clean run 624,135.
+`level score = level# × 1000 − fails × 100 − detection × 5` (min 0). Max 1,035,000; verified clean run 1,026,085.
 Rank by total failed logins: 0 GHOST LEGEND · 1–4 PHANTOM · 5–10 SPECTRE · 11–20 AGENT · 21+ ROOKIE.
 
 ## Design Rules for New Levels
@@ -114,3 +134,4 @@ Rank by total failed logins: 0 GHOST LEGEND · 1–4 PHANTOM · 5–10 SPECTRE �
 - Use `bf_node/bf_file`, `ov_node/ov_file` on the Level, not code in commands.c.
 - Encode with the same algorithm `puzzles.c` decodes. The onion spec lists layers outermost first.
 - Add a scripted solution and run it with `TB_FAST=1 TB_START_LEVEL=N` before shipping.
+- The Makefile rebuilds everything on any header change. Never ship a build made from stale objects.

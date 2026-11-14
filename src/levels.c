@@ -1,5 +1,5 @@
 /*
- * levels.c — Level definitions for all 35 stages of Terminal Breach.
+ * levels.c — Level definitions for all 45 stages of Terminal Breach.
  *
  * Each init_levelN function initialises one Level struct in the global array,
  * populating its nodes and files using the shorthand macros defined below.
@@ -32,7 +32,18 @@ static void add_node(Level *l, const char *ip, const char *hostname,
     l->nodes[i].has_logs     = 0;
     l->nodes[i].trip_seconds = 0;
     l->nodes[i].knock_seq[0] = '\0';
+    l->nodes[i].su_pass[0]   = '\0';
+    l->nodes[i].link_from[0] = '\0';
+    l->nodes[i].watch_slot   = 0;
+    l->nodes[i].knock_window = 0;
 }
+
+/* Act V markers for the most recently added node / file. */
+static void set_su(Level *l, const char *pw) { strncpy(l->nodes[l->node_count - 1].su_pass, pw, 31); }
+static void set_link(Level *l, const char *hosts) { strncpy(l->nodes[l->node_count - 1].link_from, hosts, 95); }
+static void set_slot(Level *l, int slot) { l->nodes[l->node_count - 1].watch_slot = slot; }
+static void set_window(Level *l, int cmds) { l->nodes[l->node_count - 1].knock_window = cmds; }
+static GameFile *last_file(Level *l, int n) { return &l->nodes[n].files[l->nodes[n].file_count - 1]; }
 
 /* Mechanic markers for the most recently added node (levels 26-35). */
 static void mark_watched(Level *l) { l->nodes[l->node_count - 1].is_watched = 1; }
@@ -72,6 +83,9 @@ static void add_file(Level *l, int node_idx,
     n->files[i].cipher_shift = cipher_shift;
     n->files[i].locked       = locked;
     n->files[i].cipher_key[0]= '\0';
+    n->files[i].unlock_code[0]= '\0';
+    n->files[i].manual_key   = 0;
+    n->files[i].needs_root   = 0;
 }
 
 /* Variant that also stores a cipher key (used by XOR and Vigenère puzzles). */
@@ -3381,6 +3395,1416 @@ static void init_level34(void) {
         PUZZLE_ONION, 0, "hex>xor:ZERO");
 }
 
+/* ====================================================================
+ * Levels 36–45: ACT V — ERASURE.
+ * Five agencies are hunting GHOST. Every record must go, and GHOST
+ * with it. New mechanics: manual keys (decrypt <file> <key>), per-host
+ * root via su, link-only topology, a rotating sentry and knock windows
+ * that re-seal. Generated from act5 spec; every fragment is encoded by
+ * the generator and verified by decoding through puzzles.c.
+ * ==================================================================== */
+
+#define ACT5_CMDS (ACT4_CMDS | CMD_KNOCK | CMD_UNLOCK | CMD_BRUTEFORCE | CMD_OVERRIDE | CMD_SU)
+
+/* Level 36 (idx 35) — Cold Storage (ABYSS) */
+static void init_level35(void) {
+    Level *l = &levels[35];
+    memset(l, 0, sizeof(*l));
+    l->id = 35;
+    strncpy(l->name,       "Cold Storage", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "ABYSS", 15);
+    strncpy(l->objective,
+        "Operation MIRROR is live: five agencies are hunting\n"
+        "the Architect -- you. Every record of GHOST has to go.\n"
+        "The national cold archive locks its drawers with keys\n"
+        "that are NOT on disk. Read the catalog, work out each\n"
+        "key, then: decrypt <file> <key>. Wrong keys cost.", 511);
+    strncpy(l->warnings, "TIMED 420s | 4 manual keys | hints cost 15", 255);
+    strncpy(l->solution_password, "C0LD_K3YS_N3VER_L13", 63);
+    strncpy(l->user_password,     "archivist_9", 63);
+    strncpy(l->hint,
+        "HINT: Cred archivist_9. grep the catalog log on card-catalog.\n"
+        "drawer-a frag1.vig key HALVORSEN -> C0LD_\n"
+        "drawer-b frag2.cz shift 14 (a fortnight) -> K3YS_\n"
+        "drawer-c frag3.rail rails 5 (basement B5) -> N3VER_\n"
+        "microfiche first, then deep-freeze frag4.xor key TSORF -> L13", MAX_HINT - 1);
+    l->max_attempts = 3;
+    l->detection_max = 120;
+    l->detection_per_fail = 25;
+    l->has_timer = 1;
+    l->timer_seconds = 420;
+    l->hint_cost = 15;
+    l->available_cmds = ACT5_CMDS;
+
+    int n = 0;
+    add_node(l, "10.36.0.1", "vault-lobby", "Archive reception.", PUB, 1);
+    add_file_full(l, n, "welcome.txt",
+        "[ERASURE] Operation MIRROR is live. Five agencies, one target: you.\n"
+        "Burn every record of GHOST, starting with the national cold archive.\n"
+        "Archivist credential: archivist_9\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    add_file_full(l, n, "topology.txt",
+        "  10.36.0.10 card-catalog  (USER, writable logs)\n"
+        "  10.36.0.21 drawer-a      (USER)\n"
+        "  10.36.0.22 drawer-b      (USER)\n"
+        "  10.36.0.23 drawer-c      (USER)\n"
+        "  10.36.0.30 microfiche    (USER)\n"
+        "  10.36.0.99 deep-freeze   (USER, via microfiche)\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    add_file_full(l, n, "field_manual.txt",
+        "MANUAL KEYS\n"
+        "  Files marked [KEY] keep no key on disk. You supply it:\n"
+        "      decrypt <file> <key>\n"
+        "  Caesar shifts and rail counts are numbers. Vigenere and XOR keys\n"
+        "  are words. A wrong key still 'decodes' -- into garbage -- and the\n"
+        "  failed attempt costs a little detection. Think before you type.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 1;
+    add_node(l, "10.36.0.10", "card-catalog", "Catalog server.", USR, 0);
+    mark_logs(l);
+    add_file_full(l, n, "README.txt",
+        "Catalog server. The log is long -- grep it.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    add_file_full(l, n, "catalog.log",
+        "07:58 shift start -- archivist on duty: HALVORSEN\n"
+        "08:02 drawer-a sealed (Vigenere). key = surname of the archivist on duty\n"
+        "08:09 coffee machine offline\n"
+        "08:15 drawer-b sealed (Caesar). shift = days in a fortnight\n"
+        "08:22 visitor badge 4471 returned\n"
+        "08:31 drawer-c sealed (rail fence). rails = basement level of the vault (B5)\n"
+        "08:44 deep-freeze payload sealed (XOR). key = vault codename, spelled backwards\n"
+        "09:00 vault codename this quarter: FROST\n"
+        "09:12 drawer-c maintenance, no change\n"
+        "09:30 deep-freeze only accepts readers who checked the microfiche index\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 2;
+    add_node(l, "10.36.0.21", "drawer-a", "Drawer A.", USR, 0);
+    add_file_full(l, n, "frag1.vig",
+        "J0LO_",
+        0, PUZZLE_VIGENERE, 0, "HALVORSEN", 0, NULL);
+    last_file(l, n)->manual_key = 1;
+
+    n = 3;
+    add_node(l, "10.36.0.22", "drawer-b", "Drawer B.", USR, 0);
+    add_file_full(l, n, "frag2.cz",
+        "Y3MG_",
+        0, PUZZLE_CAESAR, 14, NULL, 0, NULL);
+    last_file(l, n)->manual_key = 1;
+
+    n = 4;
+    add_node(l, "10.36.0.23", "drawer-c", "Drawer C.", USR, 0);
+    add_file_full(l, n, "frag3.rail",
+        "N3VE_R",
+        0, PUZZLE_RAIL, 5, NULL, 0, NULL);
+    last_file(l, n)->manual_key = 1;
+
+    n = 5;
+    add_node(l, "10.36.0.30", "microfiche", "Microfiche reader.", USR, 0);
+    add_file_full(l, n, "index.txt",
+        "MICROFICHE INDEX -- reader logged. deep-freeze will now accept you.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 6;
+    add_node(l, "10.36.0.99", "deep-freeze", "Deep-freeze vault.", USR, 0);
+    route_after(l, "microfiche");
+    add_file_full(l, n, "frag4.xor",
+        "18 62 7C",
+        0, PUZZLE_XOR, 0, "TSORF", 0, NULL);
+    last_file(l, n)->manual_key = 1;
+    add_file_full(l, n, "assembly.txt",
+        "Archive purge key = frag1 + frag2 + frag3 + frag4.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+}
+
+/* Level 37 (idx 36) — Root of Trust (ABYSS) */
+static void init_level36(void) {
+    Level *l = &levels[36];
+    memset(l, 0, sizeof(*l));
+    l->id = 36;
+    strncpy(l->name,       "Root of Trust", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "ABYSS", 15);
+    strncpy(l->objective,
+        "The coalition PKI issued certificates in GHOST's name.\n"
+        "Revoke them from the root down. Files marked [ROOT]\n"
+        "need root on THAT host: 'su <password>'. Each root\n"
+        "password is hidden on another host -- follow the chain\n"
+        "RA -> intermediate -> root CA -> HSM.", 511);
+    strncpy(l->warnings, "TIMED 450s | su chain | 1 honeypot | manual key", 255);
+    strncpy(l->solution_password, "R00T_0F_TRU5T_BR0KEN", 63);
+    strncpy(l->user_password,     "pki_auditor", 63);
+    strncpy(l->hint,
+        "HINT: Cred pki_auditor. crl-dist is a honeypot.\n"
+        "ra-server: decrypt badge.b64 -> su enroll-7731 -> frag1.hex R00T_\n"
+        "ocsp-responder: grep rootpw -> intermediate-ca root M1DCHA1N\n"
+        "intermediate-ca: frag2.atb 0F_; decrypt anchor.vig SHAONE -> TRUST-ANCH0R\n"
+        "root-ca: frag3.rail TRU5T_, hsm.b64 -> HSM-0451; hsm-vault frag4.oni BR0KEN", MAX_HINT - 1);
+    l->max_attempts = 3;
+    l->detection_max = 130;
+    l->detection_per_fail = 25;
+    l->has_timer = 1;
+    l->timer_seconds = 450;
+    l->hint_cost = 15;
+    l->available_cmds = ACT5_CMDS;
+
+    int n = 0;
+    add_node(l, "10.37.0.1", "ca-gateway", "PKI gateway.", PUB, 1);
+    add_file_full(l, n, "welcome.txt",
+        "Coalition PKI -- every certificate issued to GHOST must be revoked.\n"
+        "Auditor credential: pki_auditor\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    add_file_full(l, n, "topology.txt",
+        "  10.37.0.10 ra-server        (USER, root files)\n"
+        "  10.37.0.20 ocsp-responder   (USER, writable logs)\n"
+        "  10.37.0.30 intermediate-ca  (USER, root files)\n"
+        "  10.37.0.40 root-ca          (USER, via intermediate-ca, root files)\n"
+        "  10.37.0.50 crl-dist         (USER)\n"
+        "  10.37.0.60 hsm-vault        (USER, via root-ca, root files)\n"
+        "  10.37.0.70 timestamp-auth   (USER)\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    add_file_full(l, n, "field_manual.txt",
+        "PER-HOST ROOT\n"
+        "  su <password>  -> root on the CURRENT host only. The prompt turns to #.\n"
+        "  [ROOT] files can't be read, decrypted or grepped without it.\n"
+        "  A failed su is logged (half a failure of detection).\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 1;
+    add_node(l, "10.37.0.10", "ra-server", "Registration authority.", USR, 0);
+    set_su(l, "enroll-7731");
+    add_file_full(l, n, "onboarding.txt",
+        "New RA admins: your root password is the enrollment code on your badge.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    add_file_full(l, n, "badge.b64",
+        "RU5ST0xMTUVOVCBDT0RFOiBlbnJvbGwtNzczMQ==",
+        0, PUZZLE_BASE64, 0, NULL, 0, NULL);
+    add_file_full(l, n, "ra_vault.txt",
+        "Intermediate CA root password was captured by the OCSP responder's log.\n"
+        "grep it for 'rootpw' -- ignore anything marked REVOKED.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    last_file(l, n)->needs_root = 1;
+    add_file_full(l, n, "frag1.hex",
+        "52 30 30 54 5F",
+        0, PUZZLE_HEX, 0, NULL, 0, NULL);
+    last_file(l, n)->needs_root = 1;
+
+    n = 2;
+    add_node(l, "10.37.0.20", "ocsp-responder", "OCSP responder.", USR, 0);
+    mark_logs(l);
+    add_file_full(l, n, "ocsp.log",
+        "status good    serial 0x11\n"
+        "rootpw(root-ca)=Gl0b4lTrust  [REVOKED]\n"
+        "status good    serial 0x12\n"
+        "rootpw(intermediate-ca)=M1DCHA1N\n"
+        "status revoked serial 0x13 (subject: GHOST)\n"
+        "rootpw(hsm-vault)=see root-ca\n"
+        "crl-dist flagged: tampered, do not trust\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 3;
+    add_node(l, "10.37.0.30", "intermediate-ca", "Intermediate CA.", USR, 0);
+    set_su(l, "M1DCHA1N");
+    add_file_full(l, n, "README.txt",
+        "Intermediate CA. Root-only material below.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    add_file_full(l, n, "frag2.atb",
+        "0U_",
+        0, PUZZLE_ATBASH, 0, NULL, 0, NULL);
+    last_file(l, n)->needs_root = 1;
+    add_file_full(l, n, "key_note.txt",
+        "anchor.vig key: the hash algorithm we deprecated, written in letters --\n"
+        "SHA followed by its number spelled out.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    last_file(l, n)->needs_root = 1;
+    add_file_full(l, n, "anchor.vig",
+        "jvoh-pe jvoh cekzwceh: LYUGG-EFJH0F",
+        0, PUZZLE_VIGENERE, 0, "SHAONE", 0, NULL);
+    last_file(l, n)->manual_key = 1;
+    last_file(l, n)->needs_root = 1;
+
+    n = 4;
+    add_node(l, "10.37.0.40", "root-ca", "Root certificate authority.", USR, 0);
+    route_after(l, "intermediate-ca");
+    set_su(l, "TRUST-ANCH0R");
+    add_file_full(l, n, "frag3.rail",
+        "TTR5_U",
+        0, PUZZLE_RAIL, 3, NULL, 0, NULL);
+    last_file(l, n)->needs_root = 1;
+    add_file_full(l, n, "hsm_note.txt",
+        "The HSM root PIN is kept in hsm.b64.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    last_file(l, n)->needs_root = 1;
+    add_file_full(l, n, "hsm.b64",
+        "aHNtLXZhdWx0IHJvb3QgPSBIU00tMDQ1MQ==",
+        0, PUZZLE_BASE64, 0, NULL, 0, NULL);
+    last_file(l, n)->needs_root = 1;
+
+    n = 5;
+    add_node(l, "10.37.0.50", "crl-dist", "CRL distribution point.", USR, 0);
+    mark_honeypot(l);
+    add_file_full(l, n, "trap.txt",
+        "[MIRROR] Revocation request traced. Hello, GHOST.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 6;
+    add_node(l, "10.37.0.60", "hsm-vault", "Hardware security module.", USR, 0);
+    route_after(l, "root-ca");
+    set_su(l, "HSM-0451");
+    add_file_full(l, n, "frag4.oni",
+        "TkVLMFJC",
+        0, PUZZLE_ONION, 0, "b64>rev", 0, NULL);
+    last_file(l, n)->needs_root = 1;
+    add_file_full(l, n, "assembly.txt",
+        "Revocation key = frag1 + frag2 + frag3 + frag4.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 7;
+    add_node(l, "10.37.0.70", "timestamp-auth", "Timestamp authority.", USR, 0);
+    add_file_full(l, n, "ts.log",
+        "tsa: 1 432 timestamps issued. nothing of interest.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+}
+
+/* Level 38 (idx 37) — Pivot Point (ABYSS+) */
+static void init_level37(void) {
+    Level *l = &levels[37];
+    memset(l, 0, sizeof(*l));
+    l->id = 37;
+    strncpy(l->name,       "Pivot Point", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "ABYSS+", 15);
+    strncpy(l->objective,
+        "A defence contractor network built in layers: DMZ,\n"
+        "jumpbox, app and data tiers, backups, core. Hosts only\n"
+        "accept sessions from LINKED neighbours -- pivot hop by\n"
+        "hop using the link map. The jumpbox is WATCHED (sweep\n"
+        "every 8) and every route back passes through it.", 511);
+    strncpy(l->warnings, "TIMED 480s | LINKS | SWEEPS /8 | su | knock | 1 honeypot", 255);
+    strncpy(l->solution_password, "P1VOT_THR0UGH_TH3_DMZ", 63);
+    strncpy(l->user_password,     "red_team_lead", 63);
+    strncpy(l->hint,
+        "HINT: Cred red_team_lead. mgmt-vlan is a honeypot.\n"
+        "edge -> dmz-mail (spool: jumpbox root morris1988) -> dmz-web frag1.atb P1VOT_\n"
+        "dmz-web -> jumpbox: su morris1988, frag2.vig key BASTION -> THR0UGH_\n"
+        "jumpbox -> app-tier: grep knock -> 179 646 22\n"
+        "db-tier frag3.rail rails 3 -> TH3_ ; backup-net -> knock -> core-switch DMZ", MAX_HINT - 1);
+    l->max_attempts = 3;
+    l->detection_max = 130;
+    l->detection_per_fail = 25;
+    l->has_timer = 1;
+    l->timer_seconds = 480;
+    l->hint_cost = 18;
+    l->sweep_interval = 8;
+    l->available_cmds = ACT5_CMDS;
+
+    int n = 0;
+    add_node(l, "10.38.0.1", "edge-router", "Perimeter router.", PUB, 1);
+    add_file_full(l, n, "welcome.txt",
+        "Contractor network. They keep GHOST's dossier on the core switch.\n"
+        "Red team credential: red_team_lead\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    add_file_full(l, n, "topology.txt",
+        "LINK MAP -- you can only connect along a link:\n"
+        "  edge-router <-> dmz-web, dmz-mail\n"
+        "  dmz-web     <-> dmz-mail, jumpbox\n"
+        "  jumpbox     <-> app-tier, db-tier    (WATCHED, sweep every 8)\n"
+        "  app-tier    <-> db-tier, mgmt-vlan\n"
+        "  db-tier     <-> backup-net           (writable logs)\n"
+        "  backup-net  <-> core-switch          (core-switch FILTERED)\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    add_file_full(l, n, "field_manual.txt",
+        "LINKS: 'connect' only works from a host that links to the target.\n"
+        "  Wrong hop = NO ROUTE (half a failure). Plan the path first.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 1;
+    add_node(l, "10.38.0.10", "dmz-web", "DMZ web server.", USR, 0);
+    set_link(l, "edge-router,dmz-mail,jumpbox");
+    add_file_full(l, n, "frag1.atb",
+        "K1ELG_",
+        0, PUZZLE_ATBASH, 0, NULL, 0, NULL);
+
+    n = 2;
+    add_node(l, "10.38.0.11", "dmz-mail", "DMZ mail relay.", USR, 0);
+    set_link(l, "edge-router,dmz-web");
+    add_file_full(l, n, "spool.txt",
+        "From: sysadmin\n"
+        "To: ops\n"
+        "Subject: jumpbox\n"
+        "Root on the jumpbox is the name of the first internet worm, lowercase,\n"
+        "followed by the year it hit: morris1988\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 3;
+    add_node(l, "10.38.0.20", "jumpbox", "Bastion jump host.", USR, 0);
+    mark_watched(l);
+    set_su(l, "morris1988");
+    set_link(l, "dmz-web,app-tier,db-tier");
+    add_file_full(l, n, "motd.txt",
+        "Bastion. All sessions recorded. Root files need su.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    add_file_full(l, n, "jump_notes.txt",
+        "frag2 key: what a hardened jump host is called (7 letters).\n"
+        "db-tier rail count = number of links on this jumpbox.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    last_file(l, n)->needs_root = 1;
+    add_file_full(l, n, "frag2.vig",
+        "UHJ0NOV_",
+        0, PUZZLE_VIGENERE, 0, "BASTION", 0, NULL);
+    last_file(l, n)->manual_key = 1;
+    last_file(l, n)->needs_root = 1;
+
+    n = 4;
+    add_node(l, "10.38.0.30", "app-tier", "Application tier.", USR, 0);
+    set_link(l, "jumpbox,db-tier,mgmt-vlan");
+    add_file_full(l, n, "app.log",
+        "deploy v4.2 ok\n"
+        "core-switch maintenance knock: 179 646 22\n"
+        "healthcheck ok\n"
+        "mgmt-vlan: unknown device answering ARP. do not touch.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 5;
+    add_node(l, "10.38.0.40", "db-tier", "Database tier.", USR, 0);
+    mark_logs(l);
+    set_link(l, "jumpbox,app-tier,backup-net");
+    add_file_full(l, n, "frag3.rail",
+        "TH_3",
+        0, PUZZLE_RAIL, 3, NULL, 0, NULL);
+    last_file(l, n)->manual_key = 1;
+
+    n = 6;
+    add_node(l, "10.38.0.50", "mgmt-vlan", "Management VLAN.", USR, 0);
+    mark_honeypot(l);
+    set_link(l, "app-tier");
+    add_file_full(l, n, "trap.txt",
+        "[MIRROR] Management plane tripwire. Session fingerprinted.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 7;
+    add_node(l, "10.38.0.60", "backup-net", "Backup network.", USR, 0);
+    set_link(l, "db-tier,core-switch");
+    add_file_full(l, n, "backup.txt",
+        "Nightly backups push to core-switch. Knock before you connect.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 8;
+    add_node(l, "10.38.0.99", "core-switch", "Core switch.", USR, 0);
+    set_knock(l, "179 646 22");
+    set_link(l, "backup-net");
+    add_file_full(l, n, "frag4.hex",
+        "44 4D 5A",
+        0, PUZZLE_HEX, 0, NULL, 0, NULL);
+    add_file_full(l, n, "assembly.txt",
+        "Dossier wipe key = frag1 + frag2 + frag3 + frag4.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+}
+
+/* Level 39 (idx 38) — Carousel (ABYSS+) */
+static void init_level38(void) {
+    Level *l = &levels[38];
+    memset(l, 0, sizeof(*l));
+    l->id = 38;
+    strncpy(l->name,       "Carousel", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "ABYSS+", 15);
+    strncpy(l->objective,
+        "An embassy watches its compound through four cameras\n"
+        "on a CAROUSEL: each sweep (every 5 commands) the\n"
+        "sentry looks through ONE camera, rotating north, east,\n"
+        "south, west. 'status' shows the live camera and the\n"
+        "next one. Visit each camera while the sentry looks\n"
+        "elsewhere.", 511);
+    strncpy(l->warnings, "TIMED 480s | ROTATING SENTRY /5 | links | su | 3 manual keys", 255);
+    strncpy(l->solution_password, "CAR0USEL_0F_F0UR_EYES", 63);
+    strncpy(l->user_password,     "lens_tech", 63);
+    strncpy(l->hint,
+        "HINT: Cred lens_tech. cam-spare is a honeypot.\n"
+        "ring-road: grep root -> control-room root argus-100\n"
+        "control-room: su, cat keys.txt (shift 6, rails 3, key PANOPTES)\n"
+        "cam-north oni x2 CAR0USEL_ | cam-east cz 6 0F_ | cam-south rail 3 F0UR_\n"
+        "cam-west vig PANOPTES EYES. Check status before each camera.", MAX_HINT - 1);
+    l->max_attempts = 3;
+    l->detection_max = 140;
+    l->detection_per_fail = 25;
+    l->has_timer = 1;
+    l->timer_seconds = 480;
+    l->hint_cost = 18;
+    l->sweep_interval = 5;
+    l->watch_cycle = 4;
+    l->available_cmds = ACT5_CMDS;
+
+    int n = 0;
+    add_node(l, "10.39.0.1", "security-desk", "Embassy security desk.", PUB, 1);
+    add_file_full(l, n, "welcome.txt",
+        "Embassy compound. Technician credential: lens_tech\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    add_file_full(l, n, "topology.txt",
+        "LINKS: every camera and the control room hang off ring-road.\n"
+        "  security-desk <-> ring-road\n"
+        "  ring-road     <-> cam-north, cam-east, cam-south, cam-west,\n"
+        "                    cam-spare, control-room   (writable logs)\n"
+        "SENTRY CAROUSEL (one live camera per sweep, in this order):\n"
+        "  cam-north -> cam-east -> cam-south -> cam-west -> repeat\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 1;
+    add_node(l, "10.39.0.10", "ring-road", "Compound ring network.", USR, 0);
+    mark_logs(l);
+    set_link(l, "security-desk,cam-north,cam-east,cam-south,cam-west,cam-spare,control-room");
+    add_file_full(l, n, "ring.log",
+        "carousel started, dwell 5 operator actions per camera\n"
+        "control-room root password rotated: argus-100\n"
+        "cam-spare offline since Tuesday -- anything answering there is not ours\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 2;
+    add_node(l, "10.39.0.21", "cam-north", "North camera.", USR, 0);
+    set_link(l, "ring-road");
+    set_slot(l, 1);
+    add_file_full(l, n, "frag1.oni",
+        "WFpJMEZIVk9f",
+        0, PUZZLE_ONION, 0, "b64>atb", 0, NULL);
+
+    n = 3;
+    add_node(l, "10.39.0.22", "cam-east", "East camera.", USR, 0);
+    set_link(l, "ring-road");
+    set_slot(l, 2);
+    add_file_full(l, n, "frag2.cz",
+        "0L_",
+        0, PUZZLE_CAESAR, 6, NULL, 0, NULL);
+    last_file(l, n)->manual_key = 1;
+
+    n = 4;
+    add_node(l, "10.39.0.23", "cam-south", "South camera.", USR, 0);
+    set_link(l, "ring-road");
+    set_slot(l, 3);
+    add_file_full(l, n, "frag3.rail",
+        "F_0RU",
+        0, PUZZLE_RAIL, 3, NULL, 0, NULL);
+    last_file(l, n)->manual_key = 1;
+
+    n = 5;
+    add_node(l, "10.39.0.24", "cam-west", "West camera.", USR, 0);
+    set_link(l, "ring-road");
+    set_slot(l, 4);
+    add_file_full(l, n, "frag4.vig",
+        "TYRG",
+        0, PUZZLE_VIGENERE, 0, "PANOPTES", 0, NULL);
+    last_file(l, n)->manual_key = 1;
+
+    n = 6;
+    add_node(l, "10.39.0.30", "control-room", "Camera control room.", USR, 0);
+    set_su(l, "argus-100");
+    set_link(l, "ring-road");
+    add_file_full(l, n, "keys.txt",
+        "cam-east  Caesar shift: 6\n"
+        "cam-south rail count  : 3\n"
+        "cam-west  Vigenere key: the hundred-eyed giant's other name -- PANOPTES\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    last_file(l, n)->needs_root = 1;
+
+    n = 7;
+    add_node(l, "10.39.0.40", "cam-spare", "Spare camera.", USR, 0);
+    mark_honeypot(l);
+    set_link(l, "ring-road");
+    add_file_full(l, n, "trap.txt",
+        "[MIRROR] The spare camera was watching you.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+}
+
+/* Level 40 (idx 39) — Knock Window (ABYSS++) */
+static void init_level39(void) {
+    Level *l = &levels[39];
+    memset(l, 0, sizeof(*l));
+    l->id = 39;
+    strncpy(l->name,       "Knock Window", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "ABYSS++", 15);
+    strncpy(l->objective,
+        "A naval port hides GHOST's file behind three gates\n"
+        "whose firewalls RE-SEAL a few commands after you knock\n"
+        "-- connect inside the window or knock again. Gate-2 is\n"
+        "WATCHED (sweep every 7). The lighthouse is ALARMED:\n"
+        "60s trace from first touch. Plan every move.", 511);
+    strncpy(l->warnings, "TIMED 480s | KNOCK WINDOWS | SWEEPS /7 | TRIP 60s | su", 255);
+    strncpy(l->solution_password, "W1ND0W_0F_0PP0RTUN1TY", 63);
+    strncpy(l->user_password,     "port_warden", 63);
+    strncpy(l->hint,
+        "HINT: Cred port_warden. smuggler-cove is a honeypot.\n"
+        "harbor-log: grep gate -> knocks + windows, grep shift -> 12\n"
+        "gate-1 (window 4): frag1.oni W1ND0W_ ; dock-a (via gate-1): frag2.cz 12 -> 0F_\n"
+        "gate-2 (window 3, watched): frag3.rail 3 -> 0PP0R, keeper.txt -> beacon-1849\n"
+        "lighthouse (window 2, alarmed): su beacon-1849, frag4.xor KEEPER -> TUN1TY", MAX_HINT - 1);
+    l->max_attempts = 3;
+    l->detection_max = 140;
+    l->detection_per_fail = 25;
+    l->has_timer = 1;
+    l->timer_seconds = 480;
+    l->hint_cost = 20;
+    l->sweep_interval = 7;
+    l->available_cmds = ACT5_CMDS;
+
+    int n = 0;
+    add_node(l, "10.40.0.1", "harbor-gate", "Harbour entry.", PUB, 1);
+    add_file_full(l, n, "welcome.txt",
+        "Naval port. Warden credential: port_warden\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    add_file_full(l, n, "topology.txt",
+        "  10.40.0.10 harbor-log     (USER, writable logs)\n"
+        "  10.40.0.20 gate-1         (USER, FILTERED, window)\n"
+        "  10.40.0.21 dock-a         (USER, linked to gate-1 only)\n"
+        "  10.40.0.30 gate-2         (USER, FILTERED, window, WATCHED)\n"
+        "  10.40.0.40 lighthouse     (USER, FILTERED, window, ALARMED)\n"
+        "  10.40.0.50 smuggler-cove  (USER)\n"
+        "  10.40.0.60 customs        (USER)\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    add_file_full(l, n, "field_manual.txt",
+        "KNOCK WINDOWS: once a knock sequence completes, the firewall stays open\n"
+        "for only N commands. Connect inside the window. Late = re-sealed (half\n"
+        "a failure) and you knock the whole sequence again. 'status' counts down.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 1;
+    add_node(l, "10.40.0.10", "harbor-log", "Harbour master's log.", USR, 0);
+    mark_logs(l);
+    add_file_full(l, n, "harbor.log",
+        "06:00 tide high\n"
+        "06:10 gate-1 knock 1111 2222, window 4\n"
+        "06:12 gate-2 knock 3141 5926 5358, window 3\n"
+        "06:15 lighthouse knock 1849 1849, window 2 (keeper has the root)\n"
+        "06:20 dock-a cipher: Caesar, shift = hours between high and low tide x2 = 12\n"
+        "06:31 smuggler-cove: unregistered vessel, do not board\n"
+        "07:00 tide low\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 2;
+    add_node(l, "10.40.0.20", "gate-1", "Gate one.", USR, 0);
+    set_knock(l, "1111 2222");
+    set_window(l, 4);
+    add_file_full(l, n, "frag1.oni",
+        "5F 57 30 44 4E 31 57",
+        0, PUZZLE_ONION, 0, "hex>rev", 0, NULL);
+
+    n = 3;
+    add_node(l, "10.40.0.21", "dock-a", "Dock A.", USR, 0);
+    set_link(l, "gate-1");
+    add_file_full(l, n, "frag2.cz",
+        "0R_",
+        0, PUZZLE_CAESAR, 12, NULL, 0, NULL);
+    last_file(l, n)->manual_key = 1;
+
+    n = 4;
+    add_node(l, "10.40.0.30", "gate-2", "Gate two.", USR, 0);
+    mark_watched(l);
+    set_knock(l, "3141 5926 5358");
+    set_window(l, 3);
+    add_file_full(l, n, "frag3.rail",
+        "0RP0P",
+        0, PUZZLE_RAIL, 3, NULL, 0, NULL);
+    last_file(l, n)->manual_key = 1;
+    add_file_full(l, n, "keeper.txt",
+        "Lighthouse root password: beacon-1849\n"
+        "Payload XOR key: KEEPER\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 5;
+    add_node(l, "10.40.0.40", "lighthouse", "Lighthouse.", USR, 0);
+    set_trip(l, 60);
+    set_knock(l, "1849 1849");
+    set_window(l, 2);
+    set_su(l, "beacon-1849");
+    add_file_full(l, n, "frag4.xor",
+        "1F 10 0B 61 11 0B",
+        0, PUZZLE_XOR, 0, "KEEPER", 0, NULL);
+    last_file(l, n)->manual_key = 1;
+    last_file(l, n)->needs_root = 1;
+    add_file_full(l, n, "assembly.txt",
+        "Port wipe key = frag1 + frag2 + frag3 + frag4.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 6;
+    add_node(l, "10.40.0.50", "smuggler-cove", "Smuggler's cove.", USR, 0);
+    mark_honeypot(l);
+    add_file_full(l, n, "trap.txt",
+        "[MIRROR] Boarded. Identity captured.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 7;
+    add_node(l, "10.40.0.60", "customs", "Customs office.", USR, 0);
+    add_file_full(l, n, "manifest.txt",
+        "Cargo manifest: nothing for you here.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+}
+
+/* Level 41 (idx 40) — Interpol Mesh (OBLIVION) */
+static void init_level40(void) {
+    Level *l = &levels[40];
+    memset(l, 0, sizeof(*l));
+    l->id = 40;
+    strncpy(l->name,       "Interpol Mesh", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "OBLIVION", 15);
+    strncpy(l->objective,
+        "Interpol's notice mesh holds the red notice on GHOST.\n"
+        "Nine hosts, linked. Two mirrors are UNLABELLED\n"
+        "honeypots -- the notice log knows which. red-desk is\n"
+        "WATCHED (sweep 7). Two su chains, two manual keys, a\n"
+        "bruteforce on vault-17 and a knocked void-gate.", 511);
+    strncpy(l->warnings, "TIMED 540s | links | SWEEPS /7 | 2 honeypots | bruteforce | knock", 255);
+    strncpy(l->solution_password, "1NTERP0L_R3D_N0T1CE_V01D", 63);
+    strncpy(l->user_password,     "liaison_nine", 63);
+    strncpy(l->hint,
+        "HINT: Cred liaison_nine. grep DECOY: eu-mirror, asia-mirror.\n"
+        "notice-db grep root -> red-desk root Lyon-1923; red-desk oni x3 -> 1NTERP0L_\n"
+        "archive frag2.xor key INTERPOL -> R3D_\n"
+        "vault-17 bruteforce -> notice.locked N0T1CE_, custody.txt -> cipher-room root I24-7\n"
+        "cipher-room: knock void-gate 1923 247 7; void-gate frag4.cz 23 -> V01D", MAX_HINT - 1);
+    l->max_attempts = 3;
+    l->detection_max = 160;
+    l->detection_per_fail = 25;
+    l->has_timer = 1;
+    l->timer_seconds = 540;
+    l->hint_cost = 20;
+    l->sweep_interval = 7;
+    l->available_cmds = ACT5_CMDS;
+    strncpy(l->bf_node, "vault-17", MAX_NODE_NAME - 1);
+    strncpy(l->bf_file, "notice.locked", MAX_FILENAME - 1);
+
+    int n = 0;
+    add_node(l, "10.41.0.1", "lyon-hq", "Interpol headquarters.", PUB, 1);
+    add_file_full(l, n, "welcome.txt",
+        "Notice mesh. Liaison credential: liaison_nine\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    add_file_full(l, n, "topology.txt",
+        "LINK MAP:\n"
+        "  lyon-hq     <-> notice-db\n"
+        "  notice-db   <-> red-desk, archive        (writable logs)\n"
+        "  red-desk    <-> archive, eu-mirror       (WATCHED, sweep 7)\n"
+        "  archive     <-> asia-mirror, vault-17\n"
+        "  vault-17    <-> cipher-room\n"
+        "  cipher-room <-> void-gate                (void-gate FILTERED)\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 1;
+    add_node(l, "10.41.0.10", "notice-db", "Notice database.", USR, 0);
+    mark_logs(l);
+    set_link(l, "lyon-hq,red-desk,archive");
+    add_file_full(l, n, "notice.log",
+        "sync eu-mirror: DECOY replica planted by MIRROR, ignore\n"
+        "sync asia-mirror: DECOY replica planted by MIRROR, ignore\n"
+        "red-desk root password: Lyon-1923\n"
+        "archive XOR key: the organisation's name in capitals\n"
+        "void-gate Caesar shift: the year Interpol was founded, last two digits\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 2;
+    add_node(l, "10.41.0.20", "red-desk", "Red notice desk.", USR, 0);
+    mark_watched(l);
+    set_su(l, "Lyon-1923");
+    set_link(l, "notice-db,archive,eu-mirror");
+    add_file_full(l, n, "frag1.oni",
+        "RjUgQzQgMDMgMDUgMjUgNTQgNDUgRTQgMTM=",
+        0, PUZZLE_ONION, 0, "b64>rev>hex", 0, NULL);
+    last_file(l, n)->needs_root = 1;
+
+    n = 3;
+    add_node(l, "10.41.0.30", "archive", "Notice archive.", USR, 0);
+    set_link(l, "notice-db,red-desk,asia-mirror,vault-17");
+    add_file_full(l, n, "frag2.xor",
+        "1B 7D 10 1A",
+        0, PUZZLE_XOR, 0, "INTERPOL", 0, NULL);
+    last_file(l, n)->manual_key = 1;
+
+    n = 4;
+    add_node(l, "10.41.0.40", "eu-mirror", "EU mirror.", USR, 0);
+    mark_honeypot(l);
+    set_link(l, "red-desk");
+    add_file_full(l, n, "trap.txt",
+        "[MIRROR] Wrong reflection, GHOST.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 5;
+    add_node(l, "10.41.0.41", "asia-mirror", "Asia mirror.", USR, 0);
+    mark_honeypot(l);
+    set_link(l, "archive");
+    add_file_full(l, n, "trap.txt",
+        "[MIRROR] We see you.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 6;
+    add_node(l, "10.41.0.50", "vault-17", "Evidence vault 17.", USR, 0);
+    set_link(l, "archive,cipher-room");
+    add_file_full(l, n, "README.txt",
+        "Evidence vault. notice.locked needs bruteforce.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    add_file_full(l, n, "notice.locked",
+        "N_0ETC1",
+        0, PUZZLE_RAIL, 4, NULL, 1, NULL);
+    add_file_full(l, n, "custody.txt",
+        "Chain of custody -- cipher-room root: I24-7\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 7;
+    add_node(l, "10.41.0.60", "cipher-room", "Cipher room.", USR, 0);
+    set_su(l, "I24-7");
+    set_link(l, "vault-17,void-gate");
+    add_file_full(l, n, "routing.txt",
+        "void-gate knock: 1923 247 7\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    last_file(l, n)->needs_root = 1;
+
+    n = 8;
+    add_node(l, "10.41.0.70", "void-gate", "Void gate.", USR, 0);
+    set_knock(l, "1923 247 7");
+    set_link(l, "cipher-room");
+    add_file_full(l, n, "frag4.cz",
+        "S01A",
+        0, PUZZLE_CAESAR, 23, NULL, 0, NULL);
+    last_file(l, n)->manual_key = 1;
+    add_file_full(l, n, "assembly.txt",
+        "Notice void key = frag1 + frag2 + frag3 + frag4.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+}
+
+/* Level 42 (idx 41) — Five Eyes (OBLIVION) */
+static void init_level41(void) {
+    Level *l = &levels[41];
+    memset(l, 0, sizeof(*l));
+    l->id = 41;
+    strncpy(l->name,       "Five Eyes", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "OBLIVION", 15);
+    strncpy(l->objective,
+        "The five-nation SIGINT alliance shares one core. Its\n"
+        "five stations sit on a rotating sentry (sweep every 5,\n"
+        "one live station per sweep). The core is FILTERED with\n"
+        "a 3-command window, ALARMED (90s) and override-sealed.\n"
+        "Leitrim's intercept log ties it all together.", 511);
+    strncpy(l->warnings, "TIMED 540s | ROTATING SENTRY x5 | knock window | TRIP 90s | override", 255);
+    strncpy(l->solution_password, "F1VE_EY3S_W1DE_SHUT", 63);
+    strncpy(l->user_password,     "echelon_tap", 63);
+    strncpy(l->hint,
+        "HINT: Cred echelon_tap. ghost-station is a honeypot.\n"
+        "leitrim: grep -> key ECHELON, waihopai root kiwi-0x5, rails 3, knock 1946 1955 2001\n"
+        "pine-gap vig ECHELON F1VE_ | menwith oni x2 EY3S_ | waihopai su, rail 3 W1DE_\n"
+        "ukusa-core (window 3, 90s trace): override, decrypt .final -> SHUT\n"
+        "Watch status: never be on the live station at a sweep.", MAX_HINT - 1);
+    l->max_attempts = 3;
+    l->detection_max = 170;
+    l->detection_per_fail = 30;
+    l->has_timer = 1;
+    l->timer_seconds = 540;
+    l->hint_cost = 22;
+    l->sweep_interval = 5;
+    l->watch_cycle = 5;
+    l->available_cmds = ACT5_CMDS;
+    strncpy(l->ov_node, "ukusa-core", MAX_NODE_NAME - 1);
+    strncpy(l->ov_file, ".final", MAX_FILENAME - 1);
+
+    int n = 0;
+    add_node(l, "10.42.0.1", "echelon-tap", "Fibre tap.", PUB, 1);
+    add_file_full(l, n, "welcome.txt",
+        "Undersea fibre tap. Credential: echelon_tap\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    add_file_full(l, n, "topology.txt",
+        "  10.42.0.11 pine-gap       (USER, rotation 1)\n"
+        "  10.42.0.12 menwith        (USER, rotation 2)\n"
+        "  10.42.0.13 waihopai       (USER, rotation 3, root files)\n"
+        "  10.42.0.14 leitrim        (USER, rotation 4, writable logs)\n"
+        "  10.42.0.15 yakima         (USER, rotation 5)\n"
+        "  10.42.0.66 ghost-station  (USER)\n"
+        "  10.42.0.99 ukusa-core     (USER, FILTERED, ALARMED)\n"
+        "SENTRY: one live station per sweep, in rotation order 1 -> 5.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 1;
+    add_node(l, "10.42.0.11", "pine-gap", "Pine Gap.", USR, 0);
+    set_slot(l, 1);
+    add_file_full(l, n, "frag1.vig",
+        "J1XL_",
+        0, PUZZLE_VIGENERE, 0, "ECHELON", 0, NULL);
+    last_file(l, n)->manual_key = 1;
+
+    n = 2;
+    add_node(l, "10.42.0.12", "menwith", "Menwith Hill.", USR, 0);
+    set_slot(l, 2);
+    add_file_full(l, n, "frag2.oni",
+        "VkIzSF8=",
+        0, PUZZLE_ONION, 0, "b64>atb", 0, NULL);
+
+    n = 3;
+    add_node(l, "10.42.0.13", "waihopai", "Waihopai.", USR, 0);
+    set_su(l, "kiwi-0x5");
+    set_slot(l, 3);
+    add_file_full(l, n, "frag3.rail",
+        "W_1ED",
+        0, PUZZLE_RAIL, 3, NULL, 0, NULL);
+    last_file(l, n)->manual_key = 1;
+    last_file(l, n)->needs_root = 1;
+
+    n = 4;
+    add_node(l, "10.42.0.14", "leitrim", "Leitrim.", USR, 0);
+    mark_logs(l);
+    set_slot(l, 4);
+    add_file_full(l, n, "sigint.log",
+        "intercept 0x01: pine-gap Vigenere key ECHELON\n"
+        "intercept 0x02: waihopai root password kiwi-0x5\n"
+        "intercept 0x03: waihopai rail count 3\n"
+        "intercept 0x04: ukusa-core knock 1946 1955 2001, window 3\n"
+        "intercept 0x05: ghost-station is a MIRROR lure\n"
+        "intercept 0x06: ukusa-core seal needs override; core alarm 90s\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 5;
+    add_node(l, "10.42.0.15", "yakima", "Yakima.", USR, 0);
+    set_slot(l, 5);
+    add_file_full(l, n, "status.txt",
+        "Station decommissioned. Dish still turns.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 6;
+    add_node(l, "10.42.0.66", "ghost-station", "Unlisted station.", USR, 0);
+    mark_honeypot(l);
+    add_file_full(l, n, "trap.txt",
+        "[MIRROR] There is no sixth eye. Except ours.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 7;
+    add_node(l, "10.42.0.99", "ukusa-core", "Alliance core.", USR, 0);
+    set_trip(l, 90);
+    set_knock(l, "1946 1955 2001");
+    set_window(l, 3);
+    add_file_full(l, n, "seal.txt",
+        "Core sealed. override, then decrypt .final.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    add_file_full(l, n, ".final",
+        "HSFG",
+        1, PUZZLE_ATBASH, 0, NULL, 1, NULL);
+}
+
+/* Level 43 (idx 42) — Black Ledger (OBLIVION+) */
+static void init_level42(void) {
+    Level *l = &levels[42];
+    memset(l, 0, sizeof(*l));
+    l->id = 42;
+    strncpy(l->name,       "Black Ledger", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "OBLIVION+", 15);
+    strncpy(l->objective,
+        "The bank that launders MIRROR's budget keeps a black\n"
+        "ledger. Tellers rotate the sentry (sweep 6), the vault\n"
+        "corridor is always WATCHED, the system LEARNS your\n"
+        "patterns, and two shell companies are traps.\n"
+        "Bruteforce the clearing house, override the vault.\n"
+        "600s.", 511);
+    strncpy(l->warnings, "TIMED 600s | ADAPTIVE | ROTATING /6 | keypad | su | bf + override", 255);
+    strncpy(l->solution_password, "BL4CK_L3DG3R_B4LANC3D_Z3RO", 63);
+    strncpy(l->user_password,     "ledger_clerk", 63);
+    strncpy(l->hint,
+        "HINT: Cred ledger_clerk. audit-trail grep: DECOY, root, PIN, key, knock.\n"
+        "teller-1 vig SWIFT BL4CK_ | teller-2 unlock ledger.pin 4096 -> L3DG3R_\n"
+        "back-office su debit-credit (routing.txt) | clearing bruteforce oni x3 B4LANC3D_\n"
+        "knock black-vault 1694 1971 2008 (window 3, alarmed 75s), override\n"
+        "decrypt .zero 13 -> Z3RO. Corridor is always watched: pass straight through.", MAX_HINT - 1);
+    l->max_attempts = 3;
+    l->detection_max = 200;
+    l->detection_per_fail = 30;
+    l->has_timer = 1;
+    l->timer_seconds = 600;
+    l->hint_cost = 25;
+    l->sweep_interval = 6;
+    l->watch_cycle = 2;
+    l->adaptive_detection = 1;
+    l->available_cmds = ACT5_CMDS;
+    strncpy(l->bf_node, "clearing", MAX_NODE_NAME - 1);
+    strncpy(l->bf_file, "settle.locked", MAX_FILENAME - 1);
+    strncpy(l->ov_node, "black-vault", MAX_NODE_NAME - 1);
+    strncpy(l->ov_file, ".zero", MAX_FILENAME - 1);
+
+    int n = 0;
+    add_node(l, "10.43.0.1", "front-office", "Bank front office.", PUB, 1);
+    add_file_full(l, n, "welcome.txt",
+        "Private bank. Clerk credential: ledger_clerk\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    add_file_full(l, n, "topology.txt",
+        "LINK MAP:\n"
+        "  front-office <-> teller-1, teller-2\n"
+        "  teller-1/2   <-> each other, back-office   (tellers rotate the sentry)\n"
+        "  back-office  <-> audit-trail, shell-co-a, shell-co-b, clearing\n"
+        "  clearing     <-> vault-corridor            (corridor ALWAYS watched)\n"
+        "  vault-corridor <-> black-vault             (FILTERED, ALARMED)\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 1;
+    add_node(l, "10.43.0.11", "teller-1", "Teller one.", USR, 0);
+    set_link(l, "front-office,teller-2,back-office");
+    set_slot(l, 1);
+    add_file_full(l, n, "frag1.vig",
+        "TH4KP_",
+        0, PUZZLE_VIGENERE, 0, "SWIFT", 0, NULL);
+    last_file(l, n)->manual_key = 1;
+
+    n = 2;
+    add_node(l, "10.43.0.12", "teller-2", "Teller two.", USR, 0);
+    set_link(l, "front-office,teller-1,back-office");
+    set_slot(l, 2);
+    add_file_full(l, n, "ledger.pin",
+        "4C 33 44 47 33 52 5F",
+        0, PUZZLE_HEX, 0, NULL, 1, "4096");
+
+    n = 3;
+    add_node(l, "10.43.0.20", "back-office", "Back office.", USR, 0);
+    set_su(l, "debit-credit");
+    set_link(l, "teller-1,teller-2,audit-trail,shell-co-a,shell-co-b,clearing");
+    add_file_full(l, n, "routing.txt",
+        "black-vault knock: 1694 1971 2008 (window 3)\n"
+        ".zero shift: half the alphabet\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    last_file(l, n)->needs_root = 1;
+
+    n = 4;
+    add_node(l, "10.43.0.30", "audit-trail", "Audit trail.", USR, 0);
+    mark_logs(l);
+    set_link(l, "back-office");
+    add_file_full(l, n, "audit.log",
+        "aml: shell-co-a is a DECOY front, flagged by MIRROR\n"
+        "aml: shell-co-b is a DECOY front, flagged by MIRROR\n"
+        "ops: back-office root rotated to debit-credit\n"
+        "ops: teller-2 keypad PIN = 2 to the power 12\n"
+        "ops: teller-1 Vigenere key = the interbank messaging network, SWIFT\n"
+        "ops: black-vault knock lives in back-office routing.txt\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 5;
+    add_node(l, "10.43.0.40", "shell-co-a", "Shell company A.", USR, 0);
+    mark_honeypot(l);
+    set_link(l, "back-office");
+    add_file_full(l, n, "trap.txt",
+        "[MIRROR] Follow the money. We did.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 6;
+    add_node(l, "10.43.0.41", "shell-co-b", "Shell company B.", USR, 0);
+    mark_honeypot(l);
+    set_link(l, "back-office");
+    add_file_full(l, n, "trap.txt",
+        "[MIRROR] Nice try.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 7;
+    add_node(l, "10.43.0.50", "clearing", "Clearing house.", USR, 0);
+    set_link(l, "back-office,vault-corridor");
+    add_file_full(l, n, "README.txt",
+        "settle.locked needs bruteforce.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    add_file_full(l, n, "settle.locked",
+        "RjUgNDQgMzMgMzQgRTQgMTQgQzQgNDMgMjQ=",
+        0, PUZZLE_ONION, 0, "b64>rev>hex", 1, NULL);
+
+    n = 8;
+    add_node(l, "10.43.0.60", "vault-corridor", "Vault corridor.", USR, 0);
+    mark_watched(l);
+    set_link(l, "clearing,black-vault");
+    add_file_full(l, n, "camera.txt",
+        "You are on camera. Keep walking.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 9;
+    add_node(l, "10.43.0.99", "black-vault", "The black vault.", USR, 0);
+    set_trip(l, 75);
+    set_knock(l, "1694 1971 2008");
+    set_window(l, 3);
+    set_link(l, "vault-corridor");
+    add_file_full(l, n, "seal.txt",
+        "Vault sealed. override, then: decrypt .zero <shift>\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    add_file_full(l, n, ".zero",
+        "M3EB",
+        1, PUZZLE_CAESAR, 13, NULL, 1, NULL);
+    last_file(l, n)->manual_key = 1;
+}
+
+/* Level 44 (idx 43) — Mirror Protocol (NULL) */
+static void init_level43(void) {
+    Level *l = &levels[43];
+    memset(l, 0, sizeof(*l));
+    l->id = 43;
+    strncpy(l->name,       "Mirror Protocol", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "NULL", 15);
+    strncpy(l->objective,
+        "Operation MIRROR's own command net. Three dossiers on\n"
+        "you rotate under the sentry (sweep 5); the switchboard\n"
+        "is always WATCHED. Two reflections are traps. You need\n"
+        "su twice, three keys, a keypad, a bruteforce, a knock\n"
+        "window and an override -- with only TWO logins.", 511);
+    strncpy(l->warnings, "TIMED 600s | ADAPTIVE | ROTATING /5 | TRIP 90s | 2 ATTEMPTS", 255);
+    strncpy(l->solution_password, "N0_M1RR0R_N0_GH0ST_N0_TRAC3", 63);
+    strncpy(l->user_password,     "mirror_handler", 63);
+    strncpy(l->hint,
+        "HINT: Cred mirror_handler. wiretap grep: DECOY, root, key, PIN, knock.\n"
+        "dossier-a xor MI6 -> N0_ | dossier-b oni x3 -> M1RR0R_\n"
+        "dossier-c unlock wanted.pin 1984, rail 4 -> N0_GH0ST_\n"
+        "switchboard su sw1tchb0ard; signals bruteforce -> null-room root segfault-11\n"
+        "knock null-room 0 0 7 (window 3), override, su, decrypt .trace LOOKINGGLASS", MAX_HINT - 1);
+    l->max_attempts = 2;
+    l->detection_max = 220;
+    l->detection_per_fail = 35;
+    l->has_timer = 1;
+    l->timer_seconds = 600;
+    l->hint_cost = 30;
+    l->sweep_interval = 5;
+    l->watch_cycle = 3;
+    l->adaptive_detection = 1;
+    l->available_cmds = ACT5_CMDS;
+    strncpy(l->bf_node, "signals", MAX_NODE_NAME - 1);
+    strncpy(l->bf_file, "sig.locked", MAX_FILENAME - 1);
+    strncpy(l->ov_node, "null-room", MAX_NODE_NAME - 1);
+    strncpy(l->ov_file, ".trace", MAX_FILENAME - 1);
+
+    int n = 0;
+    add_node(l, "10.44.0.1", "operation-mirror", "MIRROR operations floor.", PUB, 1);
+    add_file_full(l, n, "welcome.txt",
+        "[MIRROR] Handler console. Credential: mirror_handler\n"
+        "Three dossiers on GHOST. Burn all of them.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    add_file_full(l, n, "topology.txt",
+        "LINK MAP:\n"
+        "  operation-mirror <-> dossier-a, dossier-b, dossier-c\n"
+        "  dossier-a/b/c    <-> each other, switchboard   (dossiers rotate the sentry)\n"
+        "  switchboard      <-> wiretap, reflection-1, reflection-2, signals  (ALWAYS watched)\n"
+        "  signals          <-> null-room                 (FILTERED, ALARMED)\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 1;
+    add_node(l, "10.44.0.11", "dossier-a", "Dossier A.", USR, 0);
+    set_link(l, "operation-mirror,dossier-b,dossier-c,switchboard");
+    set_slot(l, 1);
+    add_file_full(l, n, "frag1.xor",
+        "03 79 69",
+        0, PUZZLE_XOR, 0, "MI6", 0, NULL);
+    last_file(l, n)->manual_key = 1;
+
+    n = 2;
+    add_node(l, "10.44.0.12", "dossier-b", "Dossier B.", USR, 0);
+    set_link(l, "operation-mirror,dossier-a,dossier-c,switchboard");
+    set_slot(l, 2);
+    add_file_full(l, n, "frag2.oni",
+        "NEUgMzEgNDkgNDkgMzAgNDkgNUY=",
+        0, PUZZLE_ONION, 0, "b64>hex>atb", 0, NULL);
+
+    n = 3;
+    add_node(l, "10.44.0.13", "dossier-c", "Dossier C.", USR, 0);
+    set_link(l, "operation-mirror,dossier-a,dossier-b,switchboard");
+    set_slot(l, 3);
+    add_file_full(l, n, "wanted.pin",
+        "NS00T_H_G",
+        0, PUZZLE_RAIL, 4, NULL, 1, "1984");
+    last_file(l, n)->manual_key = 1;
+
+    n = 4;
+    add_node(l, "10.44.0.20", "switchboard", "Switchboard.", USR, 0);
+    mark_watched(l);
+    set_su(l, "sw1tchb0ard");
+    set_link(l, "dossier-a,dossier-b,dossier-c,wiretap,reflection-1,reflection-2,signals");
+    add_file_full(l, n, "routing.txt",
+        "null-room knock: 0 0 7 (window 3)\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    last_file(l, n)->needs_root = 1;
+
+    n = 5;
+    add_node(l, "10.44.0.30", "wiretap", "Wiretap recorder.", USR, 0);
+    mark_logs(l);
+    set_link(l, "switchboard");
+    add_file_full(l, n, "tap.log",
+        "tap: reflection-1 is a DECOY\n"
+        "tap: reflection-2 is a DECOY\n"
+        "tap: switchboard root = sw1tchb0ard\n"
+        "tap: dossier-a XOR key = the British foreign service, three characters\n"
+        "tap: dossier-c keypad = Orwell's year; rail count = 4\n"
+        "tap: null-room knock is in switchboard routing.txt (root)\n"
+        "tap: .trace key = what Alice went through, one word, no spaces\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 6;
+    add_node(l, "10.44.0.41", "reflection-1", "Reflection one.", USR, 0);
+    mark_honeypot(l);
+    set_link(l, "switchboard");
+    add_file_full(l, n, "trap.txt",
+        "[MIRROR] Look closer.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 7;
+    add_node(l, "10.44.0.42", "reflection-2", "Reflection two.", USR, 0);
+    mark_honeypot(l);
+    set_link(l, "switchboard");
+    add_file_full(l, n, "trap.txt",
+        "[MIRROR] Closer.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 8;
+    add_node(l, "10.44.0.50", "signals", "Signals room.", USR, 0);
+    set_link(l, "switchboard,null-room");
+    add_file_full(l, n, "README.txt",
+        "sig.locked needs bruteforce.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    add_file_full(l, n, "sig.locked",
+        "null-room root password: segfault-11\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 1, NULL);
+
+    n = 9;
+    add_node(l, "10.44.0.99", "null-room", "The null room.", USR, 0);
+    set_trip(l, 90);
+    set_knock(l, "0 0 7");
+    set_window(l, 3);
+    set_su(l, "segfault-11");
+    set_link(l, "signals");
+    add_file_full(l, n, "seal.txt",
+        "override opens .trace; reading it needs root here.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    add_file_full(l, n, ".trace",
+        "Y0_HFKK3",
+        1, PUZZLE_VIGENERE, 0, "LOOKINGGLASS", 1, NULL);
+    last_file(l, n)->manual_key = 1;
+    last_file(l, n)->needs_root = 1;
+}
+
+/* Level 45 (idx 44) — Null Pointer (NULL POINTER) */
+static void init_level44(void) {
+    Level *l = &levels[44];
+    memset(l, 0, sizeof(*l));
+    l->id = 44;
+    strncpy(l->name,       "Null Pointer", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "NULL POINTER", 15);
+    strncpy(l->objective,
+        "The last copy of GHOST lives in one process. Free it.\n"
+        "Log in as what you were before you were GHOST. Three\n"
+        "registers rotate the sentry (sweep 4); the kernel is\n"
+        "always WATCHED; three dangling pointers are traps. The\n"
+        "null page: knock window 2, 120s trace. Two attempts.", 511);
+    strncpy(l->warnings, "TIMED 720s | ADAPTIVE | ROTATING /4 | TRIP 120s | 2 ATTEMPTS | FINAL", 255);
+    strncpy(l->solution_password, "FR33_GH0ST_SET_T0_NULL", 63);
+    strncpy(l->user_password,     "architect", 63);
+    strncpy(l->hint,
+        "HINT: Cred: architect. stack grep: DECOY, root, key, PIN, knock.\n"
+        "register-a xor MALLOC FR33_ | register-b oni x4 GH0ST_ | register-c pin 0451, rail 3 SET_\n"
+        "kernel su ring0, frag4.cz 8 -> T0_ | syscall bruteforce -> null root segv-0xb\n"
+        "knock null 0 0 0 0 (window 2), connect, override, su segv-0xb,\n"
+        "decrypt .eof DEREFERENCE -> NULL. combine 1 2 3 4 5.", MAX_HINT - 1);
+    l->max_attempts = 2;
+    l->detection_max = 230;
+    l->detection_per_fail = 35;
+    l->has_timer = 1;
+    l->timer_seconds = 720;
+    l->hint_cost = 35;
+    l->sweep_interval = 4;
+    l->watch_cycle = 3;
+    l->adaptive_detection = 1;
+    l->available_cmds = ACT5_CMDS;
+    strncpy(l->bf_node, "syscall", MAX_NODE_NAME - 1);
+    strncpy(l->bf_file, "syscall.locked", MAX_FILENAME - 1);
+    strncpy(l->ov_node, "null", MAX_NODE_NAME - 1);
+    strncpy(l->ov_file, ".eof", MAX_FILENAME - 1);
+
+    int n = 0;
+    add_node(l, "0.0.0.1", "heap", "The heap.", PUB, 1);
+    add_file_full(l, n, "welcome.txt",
+        "[NULL] One process left. One pointer to you.\n"
+        "[NULL] Log in as the name you had before GHOST.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    add_file_full(l, n, "topology.txt",
+        "LINK MAP:\n"
+        "  heap        <-> stack\n"
+        "  stack       <-> register-a, register-b, register-c, kernel  (writable logs)\n"
+        "  register-a  <-> register-b       register-b <-> register-c\n"
+        "  kernel      <-> syscall, dangling-1, dangling-2, dangling-3  (ALWAYS watched)\n"
+        "  syscall     <-> null             (null: FILTERED, ALARMED)\n"
+        "SENTRY: registers a -> b -> c rotate, one per sweep (every 4 commands).\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 1;
+    add_node(l, "0.0.0.2", "stack", "The stack.", USR, 0);
+    mark_logs(l);
+    set_link(l, "heap,register-a,register-b,register-c,kernel");
+    add_file_full(l, n, "stack.log",
+        "frame 0: dangling-1 -> freed memory, DECOY\n"
+        "frame 1: dangling-2 -> freed memory, DECOY\n"
+        "frame 2: dangling-3 -> freed memory, DECOY\n"
+        "frame 3: kernel root = ring0\n"
+        "frame 4: register-a XOR key = the allocator you call for memory, capitals\n"
+        "frame 5: register-c keypad = the code everyone tries first in a game, 0451\n"
+        "frame 6: register-c rails = 3; kernel shift = bytes in a 64-bit pointer\n"
+        "frame 7: null knock = four zeros, window 2\n"
+        "frame 8: .eof key = what you do to a pointer to read it\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 2;
+    add_node(l, "0.0.0.11", "register-a", "Register A.", USR, 0);
+    set_link(l, "stack,register-b");
+    set_slot(l, 1);
+    add_file_full(l, n, "frag1.xor",
+        "0B 13 7F 7F 10",
+        0, PUZZLE_XOR, 0, "MALLOC", 0, NULL);
+    last_file(l, n)->manual_key = 1;
+
+    n = 3;
+    add_node(l, "0.0.0.12", "register-b", "Register B.", USR, 0);
+    set_link(l, "stack,register-a,register-c");
+    set_slot(l, 2);
+    add_file_full(l, n, "frag2.oni",
+        "RjUgNzQgODQgMDMgMzUgNDU=",
+        0, PUZZLE_ONION, 0, "b64>rev>hex>atb", 0, NULL);
+
+    n = 4;
+    add_node(l, "0.0.0.13", "register-c", "Register C.", USR, 0);
+    set_link(l, "stack,register-b");
+    set_slot(l, 3);
+    add_file_full(l, n, "set.pin",
+        "SE_T",
+        0, PUZZLE_RAIL, 3, NULL, 1, "0451");
+    last_file(l, n)->manual_key = 1;
+
+    n = 5;
+    add_node(l, "0.0.0.20", "kernel", "Kernel space.", USR, 0);
+    mark_watched(l);
+    set_su(l, "ring0");
+    set_link(l, "stack,syscall,dangling-1,dangling-2,dangling-3");
+    add_file_full(l, n, "frag4.cz",
+        "B0_",
+        0, PUZZLE_CAESAR, 8, NULL, 0, NULL);
+    last_file(l, n)->manual_key = 1;
+    last_file(l, n)->needs_root = 1;
+
+    n = 6;
+    add_node(l, "0.0.0.41", "dangling-1", "Dangling pointer.", USR, 0);
+    mark_honeypot(l);
+    set_link(l, "kernel");
+    add_file_full(l, n, "trap.txt",
+        "[NULL] Use after free. That was you.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 7;
+    add_node(l, "0.0.0.42", "dangling-2", "Dangling pointer.", USR, 0);
+    mark_honeypot(l);
+    set_link(l, "kernel");
+    add_file_full(l, n, "trap.txt",
+        "[NULL] Use after free. That was you.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 8;
+    add_node(l, "0.0.0.43", "dangling-3", "Dangling pointer.", USR, 0);
+    mark_honeypot(l);
+    set_link(l, "kernel");
+    add_file_full(l, n, "trap.txt",
+        "[NULL] Use after free. That was you.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+
+    n = 9;
+    add_node(l, "0.0.0.30", "syscall", "Syscall gate.", USR, 0);
+    set_link(l, "kernel,null");
+    add_file_full(l, n, "README.txt",
+        "syscall.locked needs bruteforce.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    add_file_full(l, n, "syscall.locked",
+        "null page root password: segv-0xb\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 1, NULL);
+
+    n = 10;
+    add_node(l, "0.0.0.0", "null", "Address zero.", USR, 0);
+    set_trip(l, 120);
+    set_knock(l, "0 0 0 0");
+    set_window(l, 2);
+    set_su(l, "segv-0xb");
+    set_link(l, "syscall");
+    add_file_full(l, n, "seal.txt",
+        "[NULL] override. su. decrypt .eof <key>. Then let go.\n"
+        "",
+        0, PUZZLE_NONE, 0, NULL, 0, NULL);
+    add_file_full(l, n, ".eof",
+        "QYCP",
+        1, PUZZLE_VIGENERE, 0, "DEREFERENCE", 1, NULL);
+    last_file(l, n)->manual_key = 1;
+    last_file(l, n)->needs_root = 1;
+}
+
 /* Wires bruteforce/override targets for the legacy levels (1-25) that used
    to be hard-coded in commands.c. */
 static void wire_legacy_targets(void) {
@@ -3407,7 +4831,7 @@ static void wire_legacy_targets(void) {
     }
 }
 
-/* Initialises all 35 levels in order. Called once at program startup before
+/* Initialises all 45 levels in order. Called once at program startup before
    the game loop begins. All Level structs are populated into the static array
    and remain unchanged for the duration of the session. */
 void init_levels(void) {
@@ -3446,6 +4870,16 @@ void init_levels(void) {
     init_level32();
     init_level33();
     init_level34();
+    init_level35();
+    init_level36();
+    init_level37();
+    init_level38();
+    init_level39();
+    init_level40();
+    init_level41();
+    init_level42();
+    init_level43();
+    init_level44();
     wire_legacy_targets();
 }
 

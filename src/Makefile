@@ -9,7 +9,11 @@ all: $(TARGET)
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^
 
-%.o: %.c
+HDRS    = commands.h levels.h network.h puzzles.h save.h utils.h
+
+# Every object depends on every header: the structs in levels.h are shared,
+# so a stale object compiled against an old layout silently corrupts data.
+%.o: %.c $(HDRS)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:

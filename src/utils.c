@@ -79,8 +79,9 @@ void get_prompt(GameState *gs, char *buf, int buflen) {
         snprintf(clock + used, sizeof(clock) - used, RED "[TRACE %d]" RST, tr);
     }
     snprintf(buf, (size_t)buflen,
-             "%s" GRN "ghost@%s" RST DIM "[%s]" RST GRN ":~$ " RST,
-             clock, n->ip, prm);
+             "%s" GRN "ghost@%s" RST DIM "[%s]" RST "%s",
+             clock, n->ip, prm,
+             ((gs->su_mask >> gs->current_node) & 1) ? RED ":~# " RST : GRN ":~$ " RST);
 }
 
 /* Renders the detection progress bar as a block-character fill scaled to a
@@ -158,6 +159,8 @@ void show_new_commands(unsigned int prev, unsigned int cur) {
     if (diff & CMD_KNOCK)      printf(MAG "      knock <host> <port>   -- port-knock filtered hosts\n" RST);
     if (diff & CMD_UNLOCK)     printf(MAG "      unlock <file> <code>  -- keypad-locked files\n" RST);
     if (diff & CMD_WIPE)       printf(MAG "      wipe                  -- scrub logs, lower detection\n" RST);
+    if (diff & CMD_SU)         printf(MAG "      su <password>         -- root on the current host only\n" RST);
+    if (diff & CMD_SU)         printf(MAG "      decrypt <file> <key>  -- [KEY] files need a key you find\n" RST);
     printf("\n");
 }
 
@@ -170,7 +173,7 @@ void print_banner(void) {
     printf("     ██║   ██╔══╝  ██╔══██╗██║╚██╔╝██║██║██║╚██╗██║██╔══██║██║     \n");
     printf("     ██║   ███████╗██║  ██║██║ ╚═╝ ██║██║██║ ╚████║██║  ██║███████╗\n");
     printf("     ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝\n");
-    printf("  ██████╗ ██████╗ ███████╗ █████╗  ██████╗██╗  ██╗  v4.0           \n");
+    printf("  ██████╗ ██████╗ ███████╗ █████╗  ██████╗██╗  ██╗  v5.0           \n");
     printf("  ██╔══██╗██╔══██╗██╔════╝██╔══██╗██╔════╝██║  ██║                 \n");
     printf("  ██████╔╝██████╔╝█████╗  ███████║██║     ███████║                 \n");
     printf("  ██╔══██╗██╔══██╗██╔══╝  ██╔══██║██║     ██╔══██║                 \n");
@@ -186,7 +189,7 @@ void print_banner(void) {
 void boot_sequence(void) {
     clear_screen();
     printf(GRN);
-    slow_print("[BOOT] Initializing Terminal Breach OS v4.0...", 28);
+    slow_print("[BOOT] Initializing Terminal Breach OS v5.0...", 28);
     slow_print("[BOOT] Loading kernel modules...",               28);
     slow_print("[BOOT] Mounting encrypted partitions...",        28);
     slow_print("[NET]  Establishing anonymous connection...",    28);
@@ -201,7 +204,7 @@ void boot_sequence(void) {
     print_banner();
     print_separator();
     printf(YEL);
-    slow_print("  Welcome, GHOST. Thirty-five targets. One mission.", 22);
+    slow_print("  Welcome, GHOST. Forty-five targets. One mission.", 22);
     slow_print("  Type 'help' to see available commands.", 22);
     printf(RST);
     print_separator();

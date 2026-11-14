@@ -57,11 +57,13 @@ static void reset_level(GameState *gs, int level_id) {
     gs->keypad_fails    = 0;
     gs->trace_deadline  = 0;
     gs->load_pending    = 0;
+    gs->su_mask         = 0;
 
     for (int i = 0; i < MAX_NODES; i++) {
         gs->node_files_unlocked[i]  = 0;
         gs->node_files_decrypted[i] = 0;
         gs->knock_progress[i]       = 0;
+        gs->knock_open_at[i]        = 0;
         for (int j = 0; j < MAX_FILES; j++) gs->file_layers[i][j] = 0;
     }
 
@@ -84,6 +86,13 @@ static void level_transition(GameState *gs, int next, unsigned int prev_cmds,
         printf(MAG);
         slow_print("[????] ...the Architect is dead. So why is the network still talking?", 22);
         slow_print("[????] A dead-man seed just fired. Codename: LAZARUS.", 22);
+        printf(RST);
+    }
+    if (next == 35) {
+        printf(MAG);
+        slow_print("[ZERO] You logged in as yourself. The Architect was always GHOST.", 22);
+        slow_print("[MIRROR] ...and now five agencies know it too. Operation MIRROR is live.", 22);
+        slow_print("[SYS]  ACT V -- ERASURE. Burn every record of GHOST. Then GHOST.", 22);
         printf(RST);
     }
     slow_print("[SYS] Level complete. Pivoting to next target...", 28);
@@ -124,30 +133,31 @@ static void show_win_screen(GameState *gs) {
     printf(RST "\n");
 
     printf(MAG);
-    slow_print("  [ZERO] You logged in as yourself. The Architect was always GHOST.", 18);
-    slow_print("  [ZERO] Every target was a mirror. The loop is closed.", 18);
+    slow_print("  [NULL] free(ghost); ghost = NULL;", 18);
+    slow_print("  [NULL] Every record is gone. Every mirror is dark. Nobody is looking", 18);
+    slow_print("  [NULL] for you, because there is no one left to find.", 18);
     printf(RST "\n");
 
     int duration = (int)(time(NULL) - gs->game_start);
     int mins     = duration / 60;
     int secs     = duration % 60;
 
-    printf(GRN "  ╔══════════════════════════════════════════════════════╗\n" RST);
+    printf(GRN "  ╔═════════════════════════════════════════════════════╗\n" RST);
     printf(GRN "  ║  TERMINAL BREACH -- COMPLETE                        ║\n" RST);
-    printf(GRN "  ║  All %2d systems compromised. LAZARUS stays buried.  ║\n" RST, TOTAL_LEVELS);
-    printf(GRN "  ╠══════════════════════════════════════════════════════╣\n" RST);
+    printf(GRN "  ║  All %2d systems compromised. GHOST was never here.  ║\n" RST, TOTAL_LEVELS);
+    printf(GRN "  ╠═════════════════════════════════════════════════════╣\n" RST);
     printf(GRN "  ║  FINAL SCORE    : %-7d pts                       ║\n" RST, gs->score);
-    printf(GRN "  ║  Total fails    : %-4d                             ║\n" RST, gs->total_fails);
-    printf(GRN "  ║  Commands used  : %-4d                             ║\n" RST, gs->total_commands);
+    printf(GRN "  ║  Total fails    : %-4d                              ║\n" RST, gs->total_fails);
+    printf(GRN "  ║  Commands used  : %-4d                              ║\n" RST, gs->total_commands);
     printf(GRN "  ║  Time taken     : %02d:%02d                             ║\n" RST, mins, secs);
-    printf(GRN "  ╠══════════════════════════════════════════════════════╣\n" RST);
+    printf(GRN "  ╠═════════════════════════════════════════════════════╣\n" RST);
     printf(GRN "  ║  Level scores:                                      ║\n" RST);
     for (int i = 0; i < TOTAL_LEVELS; i++) {
         Level *lv = get_level(i);
         printf(GRN "  ║    L%-2d %-27.27s %6d pts       ║\n" RST,
                i + 1, lv->name, gs->level_scores[i]);
     }
-    printf(GRN "  ╠══════════════════════════════════════════════════════╣\n" RST);
+    printf(GRN "  ╠═════════════════════════════════════════════════════╣\n" RST);
 
     /* Rank is determined by total login failures across the entire run. */
     const char *rank;
@@ -157,8 +167,8 @@ static void show_win_screen(GameState *gs) {
     else if (gs->total_fails <= 20) rank = "AGENT        -- Good effort.";
     else                            rank = "ROOKIE       -- Keep training.";
 
-    printf(GRN "  ║  Rank: %-44s║\n" RST, rank);
-    printf(GRN "  ╚══════════════════════════════════════════════════════╝\n" RST);
+    printf(GRN "  ║  Rank: %-45s║\n" RST, rank);
+    printf(GRN "  ╚═════════════════════════════════════════════════════╝\n" RST);
     printf("\n");
 }
 

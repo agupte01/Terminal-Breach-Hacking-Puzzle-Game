@@ -1,6 +1,6 @@
-# Terminal Breach v4.0
+# Terminal Breach v5.0
 
-A terminal-based hacking puzzle game written in C. You play as **GHOST** — an elite black-hat operator working through **35 escalating network intrusion scenarios**. Each level introduces new commands, tighter detection limits, multi-step puzzles, and higher stakes.
+A terminal-based hacking puzzle game written in C. You play as **GHOST** — an elite black-hat operator working through **45 escalating network intrusion scenarios**. Each level introduces new commands, tighter detection limits, multi-step puzzles, and higher stakes.
 
 > **v3.0 adds 10 new levels (16–25)** introducing four new cipher families
 > (XOR, Vigenère, hex, base64), routing-order constraints, honeypot decoy
@@ -15,6 +15,13 @@ A terminal-based hacking puzzle game written in C. You play as **GHOST** — an 
 > **silent-alarm tripwires** that start a reverse-trace countdown, and hints
 > that cost detection. Each level adds one more mechanic on top of the last.
 > v4.0 also fixes several long-standing bugs (see *Changelog v4.0* below).
+>
+> **v5.0 adds Act V, Erasure (levels 36–45)**, the longest levels in the game.
+> Five agencies are hunting GHOST, and every record has to go. New mechanics:
+> **manual keys** (`decrypt <file> <key>`, with the key hidden somewhere on the
+> network), **per-host root** (`su`), **link-only topologies** you have to pivot
+> through, a **rotating sentry** that watches a different host every sweep, and
+> **knock windows** that re-seal a few commands after you open them.
 
 ```
   ████████╗███████╗██████╗ ███╗   ███╗██╗███╗   ██╗ █████╗ ██╗
@@ -23,7 +30,7 @@ A terminal-based hacking puzzle game written in C. You play as **GHOST** — an 
      ██║   ██╔══╝  ██╔══██╗██║╚██╔╝██║██║██║╚██╗██║██╔══██║██║
      ██║   ███████╗██║  ██║██║ ╚═╝ ██║██║██║ ╚████║██║  ██║███████╗
      ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝
-  ██████╗ ██████╗ ███████╗ █████╗  ██████╗██╗  ██╗  v4.0
+  ██████╗ ██████╗ ███████╗ █████╗  ██████╗██╗  ██╗  v5.0
   ██╔══██╗██╔══██╗██╔════╝██╔══██╗██╔════╝██║  ██║
   ██████╔╝██████╔╝█████╗  ███████║██║     ███████║
   ██╔══██╗██╔══██╗██╔══╝  ██╔══██║██║     ██╔══██║
@@ -33,7 +40,7 @@ A terminal-based hacking puzzle game written in C. You play as **GHOST** — an 
 
 ---
 
-> 📘 **Stuck?** [WALKTHROUGH.md](WALKTHROUGH.md) has exact, tested command sequences for all 35 levels.
+> 📘 **Stuck?** [WALKTHROUGH.md](WALKTHROUGH.md) has exact, tested command sequences for all 45 levels.
 
 ## Table of Contents
 
@@ -79,8 +86,10 @@ A terminal-based hacking puzzle game written in C. You play as **GHOST** — an 
   - [Level 24 — Cobalt Mirage Showdown](#level-24--cobalt-mirage-showdown-legendary)
   - [Level 25 — The Architect](#level-25--the-architect-transcendent)
   - [Act IV — The Lazarus Protocol (L26–L35)](#act-iv--the-lazarus-protocol-levels-2635)
+  - [Act V — Erasure (L36–L45)](#act-v--erasure-levels-3645)
 - [Detection Math Reference](#detection-math-reference)
 - [Adding New Levels](#adding-new-levels)
+- [Changelog v5.0](#changelog-v50)
 - [Changelog v4.0](#changelog-v40)
 
 ---
@@ -115,14 +124,14 @@ TB_START_LEVEL=26 TB_FAST=1 ./terminal_breach
 ```
 Terminal-Breach-Hacking-Puzzle-Game/
 ├── README.md                              This file
-├── WALKTHROUGH.md                         Tested step-by-step solutions for all 35 levels
+├── WALKTHROUGH.md                         Tested step-by-step solutions for all 45 levels
 ├── COMPACT_README.md                      One-page reference card
 ├── REPORT.md                              Technical design report (source of the .docx)
 ├── Terminal_Breach_Technical_Report.docx  Formatted report, generated from REPORT.md
 └── src/
     ├── main.c          Game loop, level transitions, win/loss screens, score
     ├── commands.c/h    All command handlers, sweeps/trace ticks, dispatcher
-    ├── levels.c/h      All 35 level definitions; core data structures
+    ├── levels.c/h      All 45 level definitions; core data structures
     ├── network.c/h     Node lookup, file unlock/decrypt bitmask helpers
     ├── puzzles.c/h     Caesar, reverse, binary, hex, XOR, Vigenère, Base64,
     │                   Atbash, rail-fence and onion (multi-layer) decoders
@@ -309,13 +318,13 @@ Level score = (level_number × 1000) - (failed_attempts × 100) - (detection × 
 
 Minimum level score is 0 (no negative contributions to total).
 
-The theoretical maximum (zero fails and zero detection on every level) is **630,000 points** (1,000 + 2,000 + … + 35,000). Bruteforce and override are mandatory on some levels, so real runs land a little lower: the verified clean playthrough in [WALKTHROUGH.md](WALKTHROUGH.md) scores **624,135**.
+The theoretical maximum (zero fails and zero detection on every level) is **1,035,000 points** (1,000 + 2,000 + … + 45,000). Bruteforce and override are mandatory on some levels, so real runs land a little lower: the verified clean playthrough in [WALKTHROUGH.md](WALKTHROUGH.md) scores **1,026,085**.
 
-Per-level base scores: L1=1000, L2=2000, … L25=25000, … L35=35000.
+Per-level base scores: L1=1000, L2=2000, … L25=25000, … L45=45000.
 
 ### Ranks
 
-Your final rank is determined by total failed login attempts across all 35 levels:
+Your final rank is determined by total failed login attempts across all 45 levels:
 
 | Total Fails | Rank                              |
 |-------------|-----------------------------------|
@@ -357,6 +366,8 @@ Your final rank is determined by total failed login attempts across all 35 level
 | `wipe`             | Level 26 | Scrub logs on a host that keeps them (once per host); refunds one per-fail of detection |
 | `knock <host> <port>` | Level 27 | Port-knock a FILTERED host; the right order opens it, a wrong port resets the sequence and costs ½ per-fail |
 | `unlock <file> <code>` | Level 28 | Enter a keypad code; each wrong code this level costs more than the last |
+| `decrypt <file> <key>` | Level 36 | Supply the key for a `[KEY]` file; a wrong key prints garbage and costs ¼ per-fail |
+| `su <password>`    | Level 36 | Root on the current host only; unlocks `[ROOT]` files there; a failed `su` costs ½ per-fail |
 
 ### Puzzle types
 
@@ -377,13 +388,18 @@ Your final rank is determined by total failed login attempts across all 35 level
 
 - **Honeypot** *(L21, L25)* — Connecting fires `2 × detection_per_fail` extra detection. Read the topology before you scan-and-connect.
 - **Routing order** *(L17, L18, L22, L23, L25)* — Some nodes refuse a connection unless a specific prerequisite hop was visited earlier this level. Skipping the route costs detection.
-- **Adaptive detection** *(L25, L32, L34, L35)* — Repeating the same command name in a row charges escalating extra detection.
+- **Adaptive detection** *(L25, L32, L34, L35, L43–L45)* — Repeating the same command name in a row charges escalating extra detection.
 - **Writable logs** *(L26+)* — `wipe` on such a host refunds one per-fail of detection, once per host. Wiping at 0% detection gains nothing.
 - **Port knocking** *(L27, L30, L32–L35)* — FILTERED hosts refuse `connect` (½ per-fail) until you `knock` their ports in order.
 - **Keypads** *(L28, L29, L31, L33–L35)* — `[PIN]` files show up in `ls`. The codes are hidden in logs and riddles.
 - **Sentinel sweeps** *(L28, L31–L35)* — every N commands (any command counts) a sweep runs, and if you're on a WATCHED host you pay one per-fail. `status` shows the countdown, and you get a warning one command before. Onion peel progress is kept, so you can split long peels across visits.
 - **Silent alarm / tripwire** *(L29, L33–L35)* — the first connect to an ALARMED host starts a reverse-trace countdown (shown in the prompt as `[TRACE n]`) that runs for the rest of the level.
 - **Hint cost** *(L26+)* — `hint` charges detection. The automatic hint on your last login attempt is still free.
+- **Manual keys** *(L36+)* — `[KEY]` files keep no key on disk. Find it in logs and riddles, then `decrypt <file> <key>`. Caesar shifts and rail counts are numbers.
+- **Per-host root** *(L37+)* — `su <password>` gives root on the current host only (the prompt turns to `#`). `[ROOT]` files on that host need it.
+- **Link topology** *(L38, L39, L41, L43–L45)* — a host with a link list only accepts connections from those neighbours. A wrong hop gives NO ROUTE (½ per-fail).
+- **Rotating sentry** *(L39, L42–L45)* — each sweep watches a different host, in a fixed order. `status` shows the live host and the next one.
+- **Knock windows** *(L40, L42–L45)* — after the last knock, the firewall stays open for only N commands, then re-seals (½ per-fail) and you knock again.
 - **Bruteforce safety** *(all levels)* — running `bruteforce` on the wrong host is refused **without using up** its single use.
 
 ---
@@ -1235,6 +1251,91 @@ Walkthrough:
 
 ---
 
+## Act V — Erasure (Levels 36–45)
+
+> After L35, the world knows the Architect was GHOST. Five agencies launch
+> **Operation MIRROR** to hunt you down. Your last job is to erase every
+> record of GHOST, and then GHOST itself.
+>
+> These are the longest levels in the game: 7–11 hosts and 25–40 commands each.
+> The first five introduce one mechanic each; the last five combine them all.
+> Step-by-step tested solutions: [WALKTHROUGH.md](WALKTHROUGH.md#act-v--erasure).
+
+| Level | Name | Difficulty | Hosts | New pressure |
+|-------|------|-----------|-------|--------------|
+| 36 | Cold Storage | ABYSS | 7 | **Manual keys**: four `[KEY]` files, keys hidden in a catalog log |
+| 37 | Root of Trust | ABYSS | 8 | **`su` chains**: each host's root password is on another host |
+| 38 | Pivot Point | ABYSS+ | 9 | **Links**: hop DMZ → jumpbox → tiers → core; jumpbox watched |
+| 39 | Carousel | ABYSS+ | 8 | **Rotating sentry** over four cameras |
+| 40 | Knock Window | ABYSS++ | 8 | **Knock windows** that re-seal, plus a 60s alarm |
+| 41 | Interpol Mesh | OBLIVION | 9 | Links + two su + manual keys + 2 hidden honeypots + bruteforce |
+| 42 | Five Eyes | OBLIVION | 8 | Five-station rotation + knock window + 90s alarm + override |
+| 43 | Black Ledger | OBLIVION+ | 10 | Adaptive + rotating tellers + watched corridor + keypad + bf + override |
+| 44 | Mirror Protocol | NULL | 10 | Everything, two login attempts |
+| 45 | Null Pointer | NULL POINTER | 11 | Everything at the tightest settings; five fragments; the ending |
+
+### Level 36 — Cold Storage `ABYSS`
+
+**Solution:** `C0LD_K3YS_N3VER_L13` · **User:** `archivist_9` · **Detection:** 120, +25 · **Timer:** 420s
+
+Every drawer's key is described in `catalog.log` on card-catalog: `grep drawer`, `grep duty`, `grep codename`. That gives Vigenère `HALVORSEN`, Caesar `14` (a fortnight), rails `5` (basement B5) and XOR `TSORF` (FROST backwards). deep-freeze only accepts you after microfiche.
+
+### Level 37 — Root of Trust `ABYSS`
+
+**Solution:** `R00T_0F_TRU5T_BR0KEN` · **User:** `pki_auditor` · **Detection:** 130, +25 · **Timer:** 450s · **Honeypot:** `crl-dist`
+
+`badge.b64` gives ra-server's root (`enroll-7731`). `grep rootpw` on the OCSP log gives intermediate-ca's root (`M1DCHA1N`; the root-ca entry there is REVOKED). `anchor.vig` with key `SHAONE` gives root-ca's root (`TRUST-ANCH0R`), and `hsm.b64` gives the HSM's (`HSM-0451`). Each fragment is root-only on its own host.
+
+### Level 38 — Pivot Point `ABYSS+`
+
+**Solution:** `P1VOT_THR0UGH_TH3_DMZ` · **User:** `red_team_lead` · **Detection:** 130, +25 · **Timer:** 480s · **Sweep:** every 8 · **Watched:** `jumpbox` · **Honeypot:** `mgmt-vlan`
+
+Path: edge-router → dmz-mail (jumpbox root `morris1988`) → dmz-web (`P1VOT_`) → jumpbox (su, `BASTION` → `THR0UGH_`) → app-tier (knock `179 646 22`) → db-tier (rails 3 → `TH3_`) → backup-net → knock → core-switch (`DMZ`).
+
+### Level 39 — Carousel `ABYSS+`
+
+**Solution:** `CAR0USEL_0F_F0UR_EYES` · **User:** `lens_tech` · **Detection:** 140, +25 · **Timer:** 480s · **Sweep:** every 5, rotating north → east → south → west · **Honeypot:** `cam-spare`
+
+control-room root comes from `grep root ring.log` (`argus-100`), and its `keys.txt` gives shift 6, rails 3 and key `PANOPTES`. Every camera hangs off ring-road. Only enter a camera when `status` says it isn't live.
+
+### Level 40 — Knock Window `ABYSS++`
+
+**Solution:** `W1ND0W_0F_0PP0RTUN1TY` · **User:** `port_warden` · **Detection:** 140, +25 · **Timer:** 480s · **Sweep:** every 7 · **Watched:** `gate-2` · **Trip:** lighthouse 60s · **Honeypot:** `smuggler-cove`
+
+The harbour log lists every knock and window: gate-1 `1111 2222` (window 4), gate-2 `3141 5926 5358` (window 3), lighthouse `1849 1849` (window 2). dock-a is reachable only through gate-1. gate-2's `keeper.txt` gives the lighthouse root and the XOR key `KEEPER`.
+
+### Level 41 — Interpol Mesh `OBLIVION`
+
+**Solution:** `1NTERP0L_R3D_N0T1CE_V01D` · **User:** `liaison_nine` · **Detection:** 160, +25 · **Timer:** 540s · **Sweep:** every 7 · **Watched:** `red-desk` · **Honeypots:** `eu-mirror`, `asia-mirror` (unlabelled)
+
+The notice log names the decoys, red-desk's root (`Lyon-1923`), the XOR key (`INTERPOL`) and the shift (23). Bruteforce vault-17; `custody.txt` gives cipher-room's root (`I24-7`), and its `routing.txt` gives the void-gate knock `1923 247 7`.
+
+### Level 42 — Five Eyes `OBLIVION`
+
+**Solution:** `F1VE_EY3S_W1DE_SHUT` · **User:** `echelon_tap` · **Detection:** 170, +30 · **Timer:** 540s · **Sweep:** every 5, rotating pine-gap → menwith → waihopai → leitrim → yakima · **Trip:** ukusa-core 90s · **Honeypot:** `ghost-station`
+
+leitrim's `sigint.log` holds every key: `ECHELON`, waihopai root `kiwi-0x5`, rails 3, and the core knock `1946 1955 2001` (window 3). Override the core, then decrypt `.final`.
+
+### Level 43 — Black Ledger `OBLIVION+`
+
+**Solution:** `BL4CK_L3DG3R_B4LANC3D_Z3RO` · **User:** `ledger_clerk` · **Detection:** 200, +30 · **Timer:** 600s · **Adaptive** · **Sweep:** every 6, tellers rotate · **Watched:** `vault-corridor` · **Trip:** black-vault 75s · **Honeypots:** `shell-co-a`, `shell-co-b`
+
+audit-trail's log gives back-office root `debit-credit`, the teller-2 PIN (2¹² = `4096`) and the key `SWIFT`. back-office `routing.txt` gives the vault knock and the `.zero` shift (13). Bruteforce clearing, walk straight through the corridor, override the vault.
+
+### Level 44 — Mirror Protocol `NULL`
+
+**Solution:** `N0_M1RR0R_N0_GH0ST_N0_TRAC3` · **User:** `mirror_handler` · **Detection:** 220, +35 · **Timer:** 600s · **Adaptive** · **Sweep:** every 5, dossiers rotate · **Watched:** `switchboard` · **Trip:** null-room 90s · **Attempts:** 2 · **Honeypots:** `reflection-1`, `reflection-2`
+
+The wiretap log gives the decoys, switchboard root `sw1tchb0ard`, XOR `MI6`, PIN `1984`, rails 4 and the `.trace` key `LOOKINGGLASS`. Bruteforce signals for null-room's root (`segfault-11`), then knock `0 0 7`, override, su, decrypt.
+
+### Level 45 — Null Pointer `NULL POINTER` (final)
+
+**Solution:** `FR33_GH0ST_SET_T0_NULL` · **User:** `architect` · **Detection:** 230, +35 · **Timer:** 720s · **Adaptive** · **Sweep:** every 4, registers rotate · **Watched:** `kernel` · **Trip:** null 120s · **Attempts:** 2 · **Honeypots:** `dangling-1/2/3`
+
+`grep frame stack.log` reveals everything: XOR `MALLOC`, PIN `0451`, rails 3, kernel root `ring0` and shift 8, knock `0 0 0 0` (window 2), `.eof` key `DEREFERENCE`. The 4-shell onion on register-b has to be split across two visits. Bruteforce syscall for the null page's root (`segv-0xb`).
+
+---
+
 ## Detection Math Reference
 
 | Level | Target                   | Max | Per-fail | Bruteforce cost | Override cost | Timer |
@@ -1274,6 +1375,16 @@ Walkthrough:
 | 33    | Quantum Ghost            | 120 | 30       | —               | —             | 300s (+75s trip) |
 | 34    | Lazarus Core             | 180 | 30       | 60              | 90            | 300s (+60s trip) |
 | 35    | Zero Point               | 200 | 35       | 70              | 105           | 360s (+90s trip) |
+| 36    | Cold Storage             | 120 | 25       | —               | —             | 420s  |
+| 37    | Root of Trust            | 130 | 25       | —               | —             | 450s  |
+| 38    | Pivot Point              | 130 | 25       | —               | —             | 480s  |
+| 39    | Carousel                 | 140 | 25       | —               | —             | 480s  |
+| 40    | Knock Window             | 140 | 25       | —               | —             | 480s (+60s trip) |
+| 41    | Interpol Mesh            | 160 | 25       | 50              | —             | 540s  |
+| 42    | Five Eyes                | 170 | 30       | —               | 90            | 540s (+90s trip) |
+| 43    | Black Ledger             | 200 | 30       | 60              | 90            | 600s (+75s trip) |
+| 44    | Mirror Protocol          | 220 | 35       | 70              | 105           | 600s (+90s trip) |
+| 45    | Null Pointer             | 230 | 35       | 70              | 105           | 720s (+120s trip) |
 
 *Honeypots (connect cost = 2× per-fail) appear on L21, L25, L27, L30–L35. Routing order is enforced on L17, L18, L23, L26, L29–L32, L34 and L35. Each sentinel sweep that catches you costs 1× per-fail, and `wipe` refunds 1× per-fail once per log host. For v4.0 every ceiling was re-checked so the mandatory bruteforce + override cost leaves room for at least one mistake (L21, L24 and L25 used to be unwinnable).*
 
@@ -1361,7 +1472,25 @@ Walkthrough:
 - The detection system uses integer arithmetic — no floats anywhere in the game.
 - `slow_print()` uses `nanosleep()` for character-by-character output with configurable delay.
 - Save file (`terminal_breach.sav`) is plain text key=value format — human readable and editable. The v3 format adds per-level scores.
-- **Practice / testing:** `TB_START_LEVEL=26 ./terminal_breach` jumps straight to a level, and `TB_FAST=1` turns off the typewriter delays. Every sequence in WALKTHROUGH.md is run this way, and the whole 35-level game has been completed in a single session (35/35, 0 fails, GHOST LEGEND).
+- **Build:** in the Makefile, every object depends on every header. Before v5.0 a header change could leave stale objects compiled against an old struct layout.
+- **Practice / testing:** `TB_START_LEVEL=26 ./terminal_breach` jumps straight to a level, and `TB_FAST=1` turns off the typewriter delays. Every sequence in WALKTHROUGH.md is run this way, and the whole 45-level game has been completed in a single session (45/45, 0 fails, 0 sweep catches, GHOST LEGEND).
+
+---
+
+## Changelog v5.0
+
+New:
+- Levels 36–45 (Act V, *Erasure*): 7–11 hosts and 25–40 commands each.
+- Five mechanics: manual keys, `su` per-host root, link topology, rotating sentry, knock windows.
+- `status` shows the live and next sentry, open knock windows, and the hosts you have root on. The prompt shows `#` on hosts where you're root.
+- `MAX_NODES` raised from 8 to 12.
+- New ending.
+
+Fixes:
+- **The Makefile had no header dependencies.** Changing a struct in `levels.h` left stale `.o` files reading the wrong offsets, which silently broke every level. Objects now depend on all headers.
+- Win-screen box rows were misaligned by one column.
+
+Act V levels are generated from a spec that encodes every fragment itself. All 128 new files were round-tripped through the C decoders.
 
 ---
 
@@ -1384,4 +1513,4 @@ Bug fixes:
 
 ---
 
-*Terminal Breach v4.0 — Levels 26–35 and every bruteforce/override level tested end-to-end with scripted playthroughs. Zero compiler warnings.*
+*Terminal Breach v5.0 — all 45 levels tested end-to-end with scripted playthroughs, plus one continuous 45-level run. Zero compiler warnings.*

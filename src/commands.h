@@ -22,7 +22,7 @@ void cmd_status(GameState *gs);
 void cmd_hint(GameState *gs);
 void cmd_login(GameState *gs, const char *password);
 void cmd_logout(GameState *gs);
-void cmd_decrypt(GameState *gs, const char *filename);
+void cmd_decrypt(GameState *gs, const char *args);
 void cmd_save_item(GameState *gs, const char *data);
 void cmd_inventory(GameState *gs);
 void cmd_scan(GameState *gs);
@@ -37,6 +37,7 @@ void cmd_drop(GameState *gs, const char *args);
 void cmd_knock(GameState *gs, const char *args);
 void cmd_unlock(GameState *gs, const char *args);
 void cmd_wipe(GameState *gs);
+void cmd_su(GameState *gs, const char *pass);
 
 /* Parses a raw input line, checks availability, and dispatches to the
    handler above that matches. Returns immediately on timer expiry. */

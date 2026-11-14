@@ -1,12 +1,14 @@
-# Terminal Breach v4.0 — Technical Project Report
+# Terminal Breach v5.0 — Technical Project Report
 
 ## Executive Summary
 
-Terminal Breach is a terminal-based hacking puzzle game written entirely in C11. The player is GHOST, an elite black-hat operator, working through 35 escalating network-intrusion scenarios in four acts. Each level is a self-contained puzzle that introduces at most one or two new mechanics while building on everything before it: navigating multi-node networks, decoding files with ten encoding schemes, managing a tightening detection budget, racing countdown timers, and assembling passwords from fragments scattered across machines.
+Terminal Breach is a terminal-based hacking puzzle game written entirely in C11. The player is GHOST, an elite black-hat operator, working through 45 escalating network-intrusion scenarios in five acts. Each level is a self-contained puzzle that introduces at most one or two new mechanics while building on everything before it: navigating multi-node networks, decoding files with ten encoding schemes, managing a tightening detection budget, racing countdown timers, and assembling passwords from fragments scattered across machines.
 
 Version 4.0 adds Act IV, *The Lazarus Protocol* (levels 26–35). It brings seven new mechanics: Atbash and rail-fence ciphers, multi-layer "onion" payloads, port knocking, keypad locks, log wiping, sentinel sweeps, and silent-alarm tripwires. It also includes a correctness pass that fixed ten defects, three of which made original levels impossible to win.
 
-The game has no external dependencies. It compiles to a single binary using only the C standard library and POSIX `nanosleep`, and runs in any ANSI terminal. The codebase is about 6,000 lines across seven modules. Every level has a scripted solution that is run against the real binary, and the full 35-level game has been completed in a single session with zero failures.
+Version 5.0 adds Act V, *Erasure* (levels 36–45), the longest levels in the game at 7–11 hosts and 25–40 commands each. It brings five more mechanics: manual keys the player must find and type, per-host root via `su`, link-only topologies, a rotating sentry, and knock windows that re-seal. It also fixes a build defect: the Makefile had no header dependencies, so changing a shared struct could silently corrupt every level.
+
+The game has no external dependencies. It compiles to a single binary using only the C standard library and POSIX `nanosleep`, and runs in any ANSI terminal. The codebase is about 7,600 lines across seven modules. Every level has a scripted solution that is run against the real binary, and the full 45-level game has been completed in a single session with zero failures.
 
 ---
 
@@ -25,7 +27,7 @@ commands.c
   ├── puzzles.c     all ten decoders + the onion layer engine
   └── save.c        save/load to disk
 
-levels.c        all 35 level definitions (data only)
+levels.c        all 45 level definitions (data only)
 levels.h        every shared data structure and constant
 ```
 
@@ -33,11 +35,11 @@ levels.h        every shared data structure and constant
 
 | Module | Lines |
 |---|---|
-| levels.c / levels.h | 3,458 / 214 |
-| commands.c / commands.h | 1,143 / 45 |
+| levels.c / levels.h | 4,892 / 224 |
+| commands.c / commands.h | 1,309 / 46 |
 | puzzles.c / puzzles.h | 328 / 59 |
-| main.c | 246 |
-| utils.c / utils.h | 209 / 49 |
+| main.c | 256 |
+| utils.c / utils.h | 212 / 49 |
 | save.c / save.h | 88 / 25 |
 | network.c / network.h | 75 / 40 |
 
@@ -61,10 +63,12 @@ typedef struct {
     int        locked;
     char       cipher_key[64];   /* XOR/Vigenère key or onion spec  */
     char       unlock_code[16];  /* keypad PIN (v4.0)               */
+    int        manual_key;       /* v5.0: key must be typed          */
+    int        needs_root;       /* v5.0: requires su on this host   */
 } GameFile;
 ```
 
-`content` always holds the raw (possibly encoded) text and is never changed during play. Decoders write into a caller-supplied buffer. `cipher_key` was widened from 32 to 64 bytes in v4.0 because it now also holds onion layer specifications such as `b64>rev>hex>atb`. A non-empty `unlock_code` turns a locked file into a keypad file: it is listed as `[PIN]` in `ls` and opened with `unlock`.
+`content` always holds the raw (possibly encoded) text and is never changed during play. Decoders write into a caller-supplied buffer. `cipher_key` was widened from 32 to 64 bytes in v4.0 because it now also holds onion layer specifications such as `b64>rev>hex>atb`. A non-empty `unlock_code` turns a locked file into a keypad file: it is listed as `[PIN]` in `ls` and opened with `unlock`. In v5.0, `manual_key` means the key is still stored (so the game can check it) but never applied automatically: the player has to type it. `needs_root` hides the file behind `su` on its host.
 
 ### NetworkNode
 
@@ -81,6 +85,10 @@ typedef struct {
     int       has_logs;             /* v4.0: 'wipe' allowed        */
     int       trip_seconds;         /* v4.0: silent-alarm trace    */
     char      knock_seq[48];        /* v4.0: port-knock sequence   */
+    char      su_pass[32];          /* v5.0: root password         */
+    char      link_from[96];        /* v5.0: allowed source hosts  */
+    int       watch_slot;           /* v5.0: rotating-sentry slot  */
+    int       knock_window;         /* v5.0: commands before reseal */
 } NetworkNode;
 ```
 
@@ -92,7 +100,7 @@ typedef struct {
 typedef struct {
     int  id;
     char name[80], objective[512], difficulty[16], warnings[256];
-    NetworkNode nodes[8];
+    NetworkNode nodes[12];
     int  node_count;
     char solution_password[64], user_password[64], hint[512];
     int  max_attempts, detection_max, detection_per_fail;
@@ -103,10 +111,11 @@ typedef struct {
     int  hint_cost;                 /* v4.0 */
     char bf_node[32], bf_file[64];  /* v4.0: bruteforce target */
     char ov_node[32], ov_file[64];  /* v4.0: override target   */
+    int  watch_cycle;               /* v5.0: rotating-sentry length */
 } Level;
 ```
 
-`MAX_NODES` was raised from 6 to 8 for the larger Act IV topologies. The `bf_*` and `ov_*` fields replace about 120 lines of hard-coded `if (current_level == N)` branches in `commands.c`. Legacy levels are wired through a single table in `wire_legacy_targets()`.
+`MAX_NODES` was raised from 6 to 8 for Act IV, and to 12 for Act V. The `bf_*` and `ov_*` fields replace about 120 lines of hard-coded `if (current_level == N)` branches in `commands.c`. Legacy levels are wired through a single table in `wire_legacy_targets()`.
 
 ### GameState
 
@@ -115,20 +124,22 @@ typedef struct {
     int        current_level, current_node;
     Permission permission;
     int        detection;
-    int        node_files_unlocked[8], node_files_decrypted[8];
+    int        node_files_unlocked[12], node_files_decrypted[12];
     char       inventory[30][256];
     int        inv_count, attempts, scanned;
     int        bruteforce_used, override_used, level_complete, game_over;
     int        nodes_connected, last_node, last_cmd_hash, repeat_streak;
     /* v4.0 */
     int        level_cmds;                 /* drives sentinel sweeps   */
-    int        knock_progress[8], knock_open, wiped, keypad_fails;
+    int        knock_progress[12], knock_open, wiped, keypad_fails;
     time_t     trace_deadline;             /* 0 = no alarm tripped     */
-    unsigned char file_layers[8][12];      /* onion layers peeled      */
+    unsigned char file_layers[12][12];     /* onion layers peeled      */
     int        load_pending;
+    int        su_mask;                    /* v5.0: root per host      */
+    int        knock_open_at[12];          /* v5.0: window start       */
     int        total_fails, total_commands;
     time_t     level_start, game_start;
-    int        score, level_scores[35];
+    int        score, level_scores[45];
 } GameState;
 ```
 
@@ -144,7 +155,7 @@ Three ordered tiers exist: `PERM_GUEST` (0), `PERM_USER` (1) and `PERM_ADMIN` (2
 
 ## Command Progression System
 
-Each level's `available_cmds` is an `unsigned int` bitmask. Twenty-five bits are in use. The dispatcher runs a known command only if its bit is set. A recognised but locked command, or an unknown one, prints a message and costs a quarter of a per-fail. Level transitions diff the previous and next masks and announce every newly unlocked command. In v3 this announcement silently skipped `grep`, `combine`, `hint` and `logout`.
+Each level's `available_cmds` is an `unsigned int` bitmask. Twenty-six bits are in use. The dispatcher runs a known command only if its bit is set. A recognised but locked command, or an unknown one, prints a message and costs a quarter of a per-fail. Level transitions diff the previous and next masks and announce every newly unlocked command. In v3 this announcement silently skipped `grep`, `combine`, `hint` and `logout`.
 
 | Command | Unlocked | Purpose |
 |---|---|---|
@@ -158,6 +169,8 @@ Each level's `available_cmds` is an `unsigned int` bitmask. Twenty-five bits are
 | `wipe` | L26 | scrub logs once per host (−1× per-fail) |
 | `knock <host> <port>` | L27 | port knocking |
 | `unlock <file> <code>` | L28 | keypads |
+| `decrypt <file> <key>` | L36 | manual-key files |
+| `su <password>` | L36 | root on the current host |
 
 ---
 
@@ -170,6 +183,8 @@ Every level has a `detection_max` ceiling and a `detection_per_fail` unit cost. 
 | Wrong login | 1 |
 | Unknown or locked command | ¼ |
 | Bad connect target / insufficient tier / FILTERED host / wrong knock | ½ |
+| NO ROUTE (link) / knock window re-sealed / failed `su` | ½ |
+| Wrong manual key | ¼ |
 | Routing rejected | 1 |
 | Honeypot connect | 2 |
 | Sentinel sweep while on a watched host | 1 |
@@ -201,6 +216,8 @@ Every level has a `detection_max` ceiling and a `detection_per_fail` unit cost. 
 | Rail fence | L26 | zig-zag transposition over N rails |
 | Onion | L27 | an ordered stack of any of the above |
 
+From L36, any Caesar, rail-fence, Vigenère or XOR file can be marked *manual*. Its key is stored for checking but never applied automatically.
+
 ### Rail Fence
 
 To decode, the zig-zag is replayed to find which rail each position falls on. The ciphertext is sliced into per-rail runs of those lengths, and the zig-zag is walked again taking the next character from each rail in turn. This runs in O(n) with two passes and no allocation. Degenerate inputs (fewer than two rails, or at least as many rails as characters) fall back to identity.
@@ -213,7 +230,11 @@ An onion file's `cipher_key` holds a `>`-separated list of layers, outermost fir
 - `cat` shows the current partially-peeled state, and `ls` shows `[ONI k/n]`;
 - progress survives leaving the node. Level 35 relies on this: its four-shell onion sits on a host swept every five commands, so it can't be peeled in a single visit.
 
-All 84 encrypted files in the game were checked by decoding them through the C decoders. Every Act IV fragment was produced by an independent Python encoder, so the encoder and the decoder check each other.
+### Manual Keys
+
+`decrypt <file> <key>` compares the typed key to the stored one: case-insensitively for words, and as a decimal string for Caesar shifts and rail counts. On a mismatch, the game still decodes with the wrong key and prints the result, with non-printable bytes masked, so a wrong key produces believable garbage rather than an obvious error message. It also costs a quarter of a per-fail. This turns every key clue (a log line, a riddle, a hint on another host) into a real gate, where before the key was applied automatically.
+
+All 128 encrypted files in the game are checked by decoding them through the C decoders. Every Act IV and Act V fragment was produced by an independent Python encoder, so the encoder and the decoder check each other. Act V levels are generated as C from a spec, so no ciphertext is ever copied by hand.
 
 ---
 
@@ -223,10 +244,12 @@ The player always occupies one node. `scan` reveals every non-entry node. `conne
 
 1. target exists (else ½ per-fail) and is not the current node
 2. target discovered and permission tier sufficient
-3. **knock gate**: if `knock_seq` is set and the sequence has not been completed, the host is FILTERED (½)
-4. **routing**: if `route_prev` is set, that host must already appear in `nodes_connected` (1×)
-5. connection established; a honeypot adds 2×
-6. post-connect: watched-host warning; a **tripwire** starts `trace_deadline` on first touch; and the three legacy connect side-effects (L7 firebase, L12 orion-core, L15 fragment-delta) fire.
+3. **link** (v5.0): if `link_from` is set, the current host must be in that list (else NO ROUTE, ½)
+4. **knock window** (v5.0): an opened knock older than `knock_window` commands re-seals (½)
+5. **knock gate**: if `knock_seq` is set and the sequence has not been completed, the host is FILTERED (½)
+6. **routing**: if `route_prev` is set, that host must already appear in `nodes_connected` (1×)
+7. connection established; a honeypot adds 2×
+8. post-connect: watched-host or live-sentry warning; a **tripwire** starts `trace_deadline` on first touch; and the three legacy connect side-effects (L7 firebase, L12 orion-core, L15 fragment-delta) fire.
 
 ### Port Knocking
 
@@ -235,6 +258,18 @@ The player always occupies one node. `scan` reveals every non-entry node. `conne
 ### Sentinel Sweeps
 
 `process_command()` now separates parsing and pre-checks from a `dispatch()` call, followed by a `sentinel_tick()`. On levels with `sweep_interval > 0`, every command (including typos, `status` and `help`) increments `level_cmds`. When it reaches a multiple of the interval, a sweep runs: if the player is on an `is_watched` node, they pay one per-fail. One command before a sweep, a player standing on a watched node gets a warning. `status` always shows the countdown. This turns command order into a resource: players align the sweep phase with cheap filler commands, and interleave different ones so they don't trigger adaptive detection.
+
+### Rotating Sentry (v5.0)
+
+A level with `watch_cycle = k` gives hosts `watch_slot` values 1..k. Commands are grouped into windows of `sweep_interval`, and the window that contains command *c* belongs to slot `((c − 1) / interval) mod k + 1`. A host is watched at a sweep if it is always watched, or if its slot owns that window. `status` shows the live host and the next one. Players therefore plan a route that visits each rotating host while the sentry is looking somewhere else.
+
+### Per-Host Root and Links (v5.0)
+
+`su <password>` sets a bit in `su_mask` for the current node only. `[ROOT]` files on that node then become readable. Root passwords are always stored on *other* hosts, so `su` turns the map into a dependency chain. `link_from` turns the flat network into a graph: a host accepts connections only from its listed neighbours, so a fragment's location also fixes the path the player must take, often through watched hosts.
+
+### Knock Windows (v5.0)
+
+Completing a knock sequence records the command number in `knock_open_at`. A connection attempted more than `knock_window` commands later finds the firewall re-sealed: the progress resets, half a per-fail is charged, and the sequence must be knocked again. `status` counts the window down. A per-level command counter, `level_cmds`, now increments on every level, because both sweeps and windows depend on it.
 
 ### Silent Alarm (Tripwire)
 
@@ -254,7 +289,7 @@ Timed levels check `time(NULL) - level_start` against `timer_seconds` at the top
 level_score = level × 1000 − failed_logins × 100 − detection × 5   (minimum 0)
 ```
 
-The theoretical maximum over 35 levels is 630,000. Mandatory bruteforce and override costs make a perfect score impossible on some levels. The verified clean playthrough scores 624,135. Rank is decided by total failed logins: 0 GHOST LEGEND, 1–4 PHANTOM, 5–10 SPECTRE, 11–20 AGENT, 21+ ROOKIE (thresholds were rescaled from the 16-level game).
+The theoretical maximum over 45 levels is 1,035,000. Mandatory bruteforce and override costs make a perfect score impossible on some levels. The verified clean playthrough scores 1,026,085. Rank is decided by total failed logins: 0 GHOST LEGEND, 1–4 PHANTOM, 5–10 SPECTRE, 11–20 AGENT, 21+ ROOKIE (thresholds were rescaled from the 16-level game).
 
 ---
 
@@ -299,7 +334,22 @@ Three load defects were fixed in v4.0:
 | 34 Lazarus Core | everything, eight nodes, two attempts |
 | 35 Zero Point | everything at tighter parameters, plus the narrative twist |
 
-The story ends with a reveal: the final user credential is `GHOST`, the player's own identity from `whoami`, and the final password is `GH0ST_1S_TH3_ARCH1TECT`.
+**Act V (L36–45): Erasure.** Five agencies hunt GHOST. Again, each of the first five levels adds one mechanic, and the last five combine them:
+
+| Level | Adds |
+|---|---|
+| 36 Cold Storage | manual keys |
+| 37 Root of Trust | per-host root (`su`) chains |
+| 38 Pivot Point | link-only topology through a watched jumpbox |
+| 39 Carousel | rotating sentry |
+| 40 Knock Window | re-sealing knocks |
+| 41 Interpol Mesh | links + su + manual keys + hidden honeypots + bruteforce |
+| 42 Five Eyes | five-station rotation + window + alarm + override |
+| 43 Black Ledger | adaptive + rotation + watched corridor + keypad + bruteforce + override |
+| 44 Mirror Protocol | everything, two attempts |
+| 45 Null Pointer | everything at the tightest settings, five fragments |
+
+Act IV ends with a reveal: the final user credential is `GHOST`, the player's own identity from `whoami`, and the final password is `GH0ST_1S_TH3_ARCH1TECT`. In Act V, the last level's credential is `architect`, the name GHOST had before it became GHOST, and the final password frees the last pointer to it: `FR33_GH0ST_SET_T0_NULL`.
 
 ---
 
@@ -342,6 +392,16 @@ The story ends with a reveal: the final user credential is `GHOST`, the player's
 | 33 | Quantum Ghost | EVENT HORIZON | 6 | 120 | 30 | 3 | 300 | trip + riddle |
 | 34 | Lazarus Core | EVENT HORIZON+ | 8 | 180 | 30 | 2 | 300 | everything |
 | 35 | Zero Point | ZERO POINT | 8 | 200 | 35 | 2 | 360 | everything, tighter |
+| 36 | Cold Storage | ABYSS | 7 | 120 | 25 | 3 | 420 | manual keys |
+| 37 | Root of Trust | ABYSS | 8 | 130 | 25 | 3 | 450 | su chain |
+| 38 | Pivot Point | ABYSS+ | 9 | 130 | 25 | 3 | 480 | links |
+| 39 | Carousel | ABYSS+ | 8 | 140 | 25 | 3 | 480 | rotating sentry |
+| 40 | Knock Window | ABYSS++ | 8 | 140 | 25 | 3 | 480 | knock windows |
+| 41 | Interpol Mesh | OBLIVION | 9 | 160 | 25 | 3 | 540 | combination |
+| 42 | Five Eyes | OBLIVION | 8 | 170 | 30 | 3 | 540 | rotation x5 |
+| 43 | Black Ledger | OBLIVION+ | 10 | 200 | 30 | 3 | 600 | everything |
+| 44 | Mirror Protocol | NULL | 10 | 220 | 35 | 2 | 600 | everything |
+| 45 | Null Pointer | NULL POINTER | 11 | 230 | 35 | 2 | 720 | finale |
 
 ---
 
@@ -354,13 +414,13 @@ Every level has a scripted solution (the same scripts behind `WALKTHROUGH.md`). 
 - no honeypot is tripped;
 - no error message of any kind appears (missing file, routing rejection, filtered host, wrong knock or code, denied login, locked command).
 
-All 35 pass. The scripts are also concatenated and played as one continuous game, which exercises every level transition, the inventory purge and the win screen. That run finishes 35/35 with zero failed logins, rank GHOST LEGEND and 624,135 points.
+All 45 pass. The scripts are also concatenated and played as one continuous game, which exercises every level transition, the inventory purge and the win screen. That run finishes 45/45 with zero failed logins, zero sweep catches, zero honeypots and zero repeat penalties, rank GHOST LEGEND and 1,026,085 points.
 
-Targeted negative tests covered: wrong knocks (reset + penalty), knocking a host with no sequence, connecting to a filtered host, escalating keypad penalties, bruteforce on the wrong host (refused, not consumed), routing rejection before connection, honeypot spikes, trace expiry after a real 60-second wait, and save → load → load (same level, no duplicated inventory). The build is warning-free under `-Wall -Wextra -std=c11`.
+Targeted negative tests covered: wrong knocks (reset + penalty), knocking a host with no sequence, connecting to a filtered host, escalating keypad penalties, bruteforce on the wrong host (refused, not consumed), routing rejection before connection, honeypot spikes, trace expiry after a real 60-second wait, and save → load → load (same level, no duplicated inventory). The v5.0 tests add: missing and wrong manual keys, failed `su` and root-only access, NO ROUTE across a link, a knock window expiring, and being caught by the rotating sentry. The build is warning-free under `-Wall -Wextra -std=c11`.
 
 ---
 
-## Defects Fixed in v4.0
+## Defects Fixed in v4.0 and v5.0
 
 | Defect | Effect | Fix |
 |---|---|---|
@@ -374,6 +434,8 @@ Targeted negative tests covered: wrong knocks (reset + penalty), knocking a host
 | L23 `pacemaker-net` referenced but missing | briefing and hint could not be followed | node added as the final routing hop |
 | Signed overflow in adaptive hash | undefined behaviour | unsigned arithmetic |
 | Inventory could never shrink | full at ~L20 | `drop`, 30 slots, purge on transition |
+| Makefile without header dependencies (v5.0) | stale objects read old struct offsets after a header change, breaking every level | every object depends on every header |
+| Win-screen box misaligned (v5.0) | ragged right border | rows normalised to one width |
 
 ---
 
@@ -393,7 +455,7 @@ FHLOCK(".core_frag", "HVH", PUZZLE_ATBASH, 0, NULL);
 
 **Composable ciphers.** Onion payloads reuse the existing decoders as layers instead of adding new algorithms. One spec string can express any stack, and peeling one layer at a time turns decoding from a single command into a decision that interacts with sweeps and timers.
 
-**No dynamic memory.** There is no `malloc` anywhere. Every buffer is fixed-size and bounded with `strncpy` or `snprintf`. Raising `MAX_NODES` to 8 grew the static level array to about 4.0 MB, which is acceptable for a desktop binary.
+**No dynamic memory.** There is no `malloc` anywhere. Every buffer is fixed-size and bounded with `strncpy` or `snprintf`. Raising `MAX_NODES` to 12 grew the static level array to about 7.8 MB, which is acceptable for a desktop binary.
 
 **Testability hooks.** `TB_FAST` turns off `slow_print` delays and `TB_START_LEVEL` starts at any level. Together they make the full 35-level regression run in seconds, and they double as a practice mode for players.
 
@@ -403,7 +465,7 @@ FHLOCK(".core_frag", "HVH", PUZZLE_ATBASH, 0, NULL);
 
 ## Known Constraints and Limitations
 
-**Fixed capacity.** Files per node (12), nodes per level (8), inventory (30) and levels (35) are compile-time constants. The file-state bitmasks are `int`, which limits a node to 32 files.
+**Fixed capacity.** Files per node (12), nodes per level (12), inventory (30) and levels (45) are compile-time constants. The file-state bitmasks are `int`, which limits a node to 32 files.
 
 **Sweep timing is command-based, not time-based.** Typos count toward the next sweep. This is deliberate, but it can surprise players. The prompt shows timers, but not the sweep countdown, which is only in `status`.
 
@@ -415,4 +477,4 @@ FHLOCK(".core_frag", "HVH", PUZZLE_ATBASH, 0, NULL);
 
 ---
 
-*Terminal Breach v4.0: 35 levels, verified end-to-end, zero compiler warnings, no external dependencies.*
+*Terminal Breach v5.0: 45 levels, verified end-to-end, zero compiler warnings, no external dependencies.*

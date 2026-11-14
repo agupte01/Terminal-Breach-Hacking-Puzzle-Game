@@ -197,7 +197,7 @@ run.font.color.rgb = RGBColor(*BLUE)
 
 p2 = doc.add_paragraph()
 p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-run2 = p2.add_run('Version 4.0 — The Lazarus Protocol')
+run2 = p2.add_run('Version 5.0 — Erasure')
 run2.font.name  = 'Times New Roman'
 run2.font.size  = Pt(16)
 run2.font.color.rgb = RGBColor(*LGREY)
@@ -219,7 +219,7 @@ for line in [
     'Prepared by: Ani',
     'Course: CMPT — Systems Programming',
     'Institution: Simon Fraser University',
-    'Date: November 13, 2026',
+    'Date: November 14, 2026',
 ]:
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -312,7 +312,7 @@ while i < len(lines):
     if line.startswith('## '):
         title = line[3:].strip()
         if not first_h2:
-            page_break() if title in ('Level Reference', 'Defects Fixed in v4.0') else None
+            page_break() if title in ('Level Reference', 'Defects Fixed in v4.0 and v5.0') else None
         first_h2 = False
         sec += 1; sub = 0
         add_heading(f'{sec}.  {title}', 1)
