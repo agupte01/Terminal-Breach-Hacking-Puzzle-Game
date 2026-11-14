@@ -17,13 +17,13 @@
 #define MAX_FILES       12
 #define MAX_FILENAME    64
 #define MAX_CONTENT     1024
-#define MAX_NODES        6
+#define MAX_NODES        8
 #define MAX_NODE_IP     20
 #define MAX_NODE_NAME   32
 #define MAX_LEVEL_NAME  80
 #define MAX_HINT        512
-#define TOTAL_LEVELS    16
-#define MAX_INV_ITEMS   20
+#define TOTAL_LEVELS    35
+#define MAX_INV_ITEMS   30
 #define MAX_INV_LEN    256
 
 /* Access tiers that control which files and nodes a player can interact with.
@@ -34,10 +34,17 @@ typedef enum { PERM_GUEST = 0, PERM_USER = 1, PERM_ADMIN = 2 } Permission;
 /* Puzzle type identifiers stored per-file. PUZZLE_NONE means the file is
    plain text and does not need decryption. The other three map directly to
    the decode functions in puzzles.c. */
-#define PUZZLE_NONE    0
-#define PUZZLE_CAESAR  1
-#define PUZZLE_REVERSE 2
-#define PUZZLE_BINARY  3
+#define PUZZLE_NONE     0
+#define PUZZLE_CAESAR   1
+#define PUZZLE_REVERSE  2
+#define PUZZLE_BINARY   3
+#define PUZZLE_XOR      4   /* hex bytes XOR'd with cipher_key string         */
+#define PUZZLE_VIGENERE 5   /* letters shifted by repeating cipher_key        */
+#define PUZZLE_HEX      6   /* hex bytes -> ASCII, no key                     */
+#define PUZZLE_BASE64   7   /* base64 -> ASCII, no key                        */
+#define PUZZLE_ATBASH   8   /* A<->Z mirror substitution, no key              */
+#define PUZZLE_RAIL     9   /* rail-fence transposition, rails = cipher_shift */
+#define PUZZLE_ONION   10   /* multi-layer: cipher_key = "b64>hex>atb..."     */
 
 /* Command availability bitmask — one bit per command. Each Level stores an
    unsigned int with these bits set for every command the player may use.
@@ -63,6 +70,12 @@ typedef enum { PERM_GUEST = 0, PERM_USER = 1, PERM_ADMIN = 2 } Permission;
 #define CMD_OVERRIDE    (1u << 16)
 #define CMD_SAVEGAME    (1u << 17)
 #define CMD_LOADGAME    (1u << 18)
+#define CMD_GREP        (1u << 19)
+#define CMD_COMBINE     (1u << 20)
+#define CMD_DROP        (1u << 21)
+#define CMD_KNOCK       (1u << 22)
+#define CMD_UNLOCK      (1u << 23)
+#define CMD_WIPE        (1u << 24)
 
 /* Convenience bundle for the commands every level provides from the start. */
 #define CMD_BASIC (CMD_HELP|CMD_LS|CMD_CAT|CMD_CLEAR|CMD_WHOAMI|CMD_STATUS|CMD_EXIT)
@@ -80,6 +93,8 @@ typedef struct {
     int        cipher_shift; /* shift value for Caesar decryption              */
     int        puzzle_type;  /* one of the PUZZLE_* constants above            */
     int        locked;       /* if 1, inaccessible until a condition is met    */
+    char       cipher_key[64];/* key for XOR / Vigenère, or ONION layer spec    */
+    char       unlock_code[16];/* if set, 'unlock <file> <code>' opens the lock */
 } GameFile;
 
 /* A network node — a machine within a level's topology. The entry node is
@@ -94,6 +109,12 @@ typedef struct {
     Permission min_perm;   /* permission tier required to connect              */
     int       is_entry;    /* 1 if this is the level's starting node           */
     int       discovered;  /* 1 once 'scan' has revealed this node             */
+    int       is_honeypot; /* if 1, connecting fires a heavy detection spike   */
+    char      route_prev[MAX_NODE_NAME]; /* if set, requires prior connect to this hostname */
+    int       is_watched;  /* sentinel sweeps catch players parked here        */
+    int       has_logs;    /* 'wipe' can scrub this node's logs once           */
+    int       trip_seconds;/* connecting starts a trace countdown (silent alarm)*/
+    char      knock_seq[48]; /* space-separated ports; must 'knock' before connect */
 } NetworkNode;
 
 /* All data that defines one level — its narrative context, network topology,
@@ -123,6 +144,16 @@ typedef struct {
     int  timer_seconds;
 
     unsigned int available_cmds; /* bitmask of commands usable this level   */
+    int  adaptive_detection;     /* if 1, repeated commands cost more       */
+    int  sweep_interval;         /* sentinel sweep every N commands (0=off) */
+    int  hint_cost;              /* detection charged for using 'hint'      */
+
+    /* Data-driven targets for bruteforce/override. When bf_node is set the
+       player must be on that host or the attempt is refused (not consumed). */
+    char bf_node[MAX_NODE_NAME];
+    char bf_file[MAX_FILENAME];
+    char ov_node[MAX_NODE_NAME];
+    char ov_file[MAX_FILENAME];
 } Level;
 
 /* All mutable runtime state for an active play session. This struct is the
@@ -151,6 +182,21 @@ typedef struct {
     int  override_used;
     int  level_complete;
     int  game_over;
+
+    int    nodes_connected;  /* bitmask of nodes visited this level   */
+    int    last_node;        /* node index visited just before current */
+    int    last_cmd_hash;    /* hash of last command (adaptive detection) */
+    int    repeat_streak;    /* consecutive same-command count          */
+
+    /* Mechanics introduced in levels 26-35. */
+    int    level_cmds;                      /* commands issued this level (sweeps) */
+    int    knock_progress[MAX_NODES];       /* ports knocked so far, per node      */
+    int    knock_open;                      /* bitmask: knock sequence completed   */
+    int    wiped;                           /* bitmask: logs wiped on node         */
+    int    keypad_fails;                    /* wrong keypad codes this level       */
+    time_t trace_deadline;                  /* 0 = no silent-alarm trace running   */
+    unsigned char file_layers[MAX_NODES][MAX_FILES]; /* onion layers peeled    */
+    int    load_pending;                    /* loadgame: restart at current_level  */
 
     int    total_fails;
     int    total_commands;

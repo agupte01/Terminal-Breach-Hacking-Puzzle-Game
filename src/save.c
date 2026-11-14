@@ -20,11 +20,14 @@ int save_game(const GameState *gs) {
     FILE *fp = fopen(SAVE_FILE, "w");
     if (!fp) return 0;
 
-    fprintf(fp, "VERSION=2\n");
+    fprintf(fp, "VERSION=3\n");
     fprintf(fp, "LEVEL=%d\n",       gs->current_level);
     fprintf(fp, "SCORE=%d\n",       gs->score);
     fprintf(fp, "TOTAL_FAILS=%d\n", gs->total_fails);
     fprintf(fp, "TOTAL_CMDS=%d\n",  gs->total_commands);
+    for (int i = 0; i < TOTAL_LEVELS; i++)
+        if (gs->level_scores[i])
+            fprintf(fp, "LSCORE_%d=%d\n", i, gs->level_scores[i]);
     fprintf(fp, "INV_COUNT=%d\n",   gs->inv_count);
     for (int i = 0; i < gs->inv_count; i++)
         fprintf(fp, "INV_%d=%s\n", i, gs->inventory[i]);
@@ -44,6 +47,10 @@ int load_game(GameState *gs) {
     char line[512];
     int  version  = 0;
     int  inv_count = 0;
+    int  level    = -1;
+
+    /* Replace, don't append: loading twice used to duplicate the inventory. */
+    gs->inv_count = 0;
 
     while (fgets(line, sizeof(line), fp)) {
         /* Strip trailing newline or carriage return before comparing. */
@@ -52,7 +59,12 @@ int load_game(GameState *gs) {
             line[--len] = '\0';
 
         if      (strncmp(line, "VERSION=",    8) == 0) version             = atoi(line + 8);
-        else if (strncmp(line, "LEVEL=",      6) == 0) gs->current_level   = atoi(line + 6);
+        else if (strncmp(line, "LEVEL=",      6) == 0) level               = atoi(line + 6);
+        else if (strncmp(line, "LSCORE_",     7) == 0) {
+            int li = atoi(line + 7);
+            char *eq = strchr(line, '=');
+            if (eq && li >= 0 && li < TOTAL_LEVELS) gs->level_scores[li] = atoi(eq + 1);
+        }
         else if (strncmp(line, "SCORE=",      6) == 0) gs->score           = atoi(line + 6);
         else if (strncmp(line, "TOTAL_FAILS=",12) == 0) gs->total_fails    = atoi(line + 12);
         else if (strncmp(line, "TOTAL_CMDS=", 11) == 0) gs->total_commands = atoi(line + 11);
@@ -68,5 +80,9 @@ int load_game(GameState *gs) {
     }
     fclose(fp);
     (void)version;
+    /* Reject corrupt or out-of-range level numbers instead of indexing
+       past the level array. */
+    if (level < 0 || level >= TOTAL_LEVELS) level = 0;
+    gs->current_level = level;
     return 1;
 }

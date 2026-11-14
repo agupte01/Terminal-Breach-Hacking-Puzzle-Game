@@ -31,6 +31,12 @@ void cmd_bruteforce(GameState *gs);
 void cmd_override(GameState *gs);
 void cmd_savegame(GameState *gs);
 void cmd_loadgame(GameState *gs);
+void cmd_grep(GameState *gs, const char *args);
+void cmd_combine(GameState *gs, const char *args);
+void cmd_drop(GameState *gs, const char *args);
+void cmd_knock(GameState *gs, const char *args);
+void cmd_unlock(GameState *gs, const char *args);
+void cmd_wipe(GameState *gs);
 
 /* Parses a raw input line, checks availability, and dispatches to the
    handler above that matches. Returns immediately on timer expiry. */
