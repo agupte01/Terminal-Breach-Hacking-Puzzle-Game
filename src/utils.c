@@ -13,6 +13,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <stdlib.h>
 
 #define GRN  "\033[1;32m"
 #define YEL  "\033[1;33m"
@@ -26,6 +27,10 @@
    delay_ms is the per-character pause in milliseconds. This gives the terminal
    a live, active feel without relying on any animation library. */
 void slow_print(const char *text, int delay_ms) {
+    /* TB_FAST=1 disables the typewriter effect (handy for testing). */
+    static int fast = -1;
+    if (fast < 0) { const char *e = getenv("TB_FAST"); fast = (e && e[0] == '1'); }
+    if (fast) { puts(text); fflush(stdout); return; }
     struct timespec ts;
     ts.tv_sec  = 0;
     ts.tv_nsec = (long)delay_ms * 1000000L;
@@ -58,9 +63,24 @@ void get_prompt(GameState *gs, char *buf, int buflen) {
     NetworkNode *n   = &l->nodes[gs->current_node];
     const char  *prm = (gs->permission == PERM_ADMIN) ? "root" :
                        (gs->permission == PERM_USER)  ? "user" : "guest";
+    /* Live countdowns in the prompt: the level timer and, once a silent
+       alarm trips, the reverse-trace clock. */
+    char clock[64] = "";
+    time_t now = time(NULL);
+    if (l->has_timer) {
+        int rem = l->timer_seconds - (int)(now - gs->level_start);
+        if (rem < 0) rem = 0;
+        snprintf(clock, sizeof(clock), YEL "[T-%d]" RST, rem);
+    }
+    if (gs->trace_deadline) {
+        int tr = (int)(gs->trace_deadline - now);
+        if (tr < 0) tr = 0;
+        size_t used = strlen(clock);
+        snprintf(clock + used, sizeof(clock) - used, RED "[TRACE %d]" RST, tr);
+    }
     snprintf(buf, (size_t)buflen,
-             GRN "ghost@%s" RST DIM "[%s]" RST GRN ":~$ " RST,
-             n->ip, prm);
+             "%s" GRN "ghost@%s" RST DIM "[%s]" RST GRN ":~$ " RST,
+             clock, n->ip, prm);
 }
 
 /* Renders the detection progress bar as a block-character fill scaled to a
@@ -130,6 +150,14 @@ void show_new_commands(unsigned int prev, unsigned int cur) {
     if (diff & CMD_BRUTEFORCE) printf(MAG "      bruteforce\n" RST);
     if (diff & CMD_OVERRIDE)   printf(MAG "      override\n" RST);
     if (diff & CMD_SAVEGAME)   printf(MAG "      savegame  |  loadgame\n" RST);
+    if (diff & CMD_HINT)       printf(MAG "      hint\n" RST);
+    if (diff & CMD_LOGOUT)     printf(MAG "      logout\n" RST);
+    if (diff & CMD_GREP)       printf(MAG "      grep <pattern> <file>\n" RST);
+    if (diff & CMD_COMBINE)    printf(MAG "      combine [slots...]\n" RST);
+    if (diff & CMD_DROP)       printf(MAG "      drop <slot|all>\n" RST);
+    if (diff & CMD_KNOCK)      printf(MAG "      knock <host> <port>   -- port-knock filtered hosts\n" RST);
+    if (diff & CMD_UNLOCK)     printf(MAG "      unlock <file> <code>  -- keypad-locked files\n" RST);
+    if (diff & CMD_WIPE)       printf(MAG "      wipe                  -- scrub logs, lower detection\n" RST);
     printf("\n");
 }
 
@@ -142,7 +170,7 @@ void print_banner(void) {
     printf("     ██║   ██╔══╝  ██╔══██╗██║╚██╔╝██║██║██║╚██╗██║██╔══██║██║     \n");
     printf("     ██║   ███████╗██║  ██║██║ ╚═╝ ██║██║██║ ╚████║██║  ██║███████╗\n");
     printf("     ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝\n");
-    printf("  ██████╗ ██████╗ ███████╗ █████╗  ██████╗██╗  ██╗  v2.0           \n");
+    printf("  ██████╗ ██████╗ ███████╗ █████╗  ██████╗██╗  ██╗  v4.0           \n");
     printf("  ██╔══██╗██╔══██╗██╔════╝██╔══██╗██╔════╝██║  ██║                 \n");
     printf("  ██████╔╝██████╔╝█████╗  ███████║██║     ███████║                 \n");
     printf("  ██╔══██╗██╔══██╗██╔══╝  ██╔══██║██║     ██╔══██║                 \n");
@@ -158,7 +186,7 @@ void print_banner(void) {
 void boot_sequence(void) {
     clear_screen();
     printf(GRN);
-    slow_print("[BOOT] Initializing Terminal Breach OS v2.0...", 28);
+    slow_print("[BOOT] Initializing Terminal Breach OS v4.0...", 28);
     slow_print("[BOOT] Loading kernel modules...",               28);
     slow_print("[BOOT] Mounting encrypted partitions...",        28);
     slow_print("[NET]  Establishing anonymous connection...",    28);
@@ -173,7 +201,7 @@ void boot_sequence(void) {
     print_banner();
     print_separator();
     printf(YEL);
-    slow_print("  Welcome, GHOST. Seven targets. One mission.", 22);
+    slow_print("  Welcome, GHOST. Thirty-five targets. One mission.", 22);
     slow_print("  Type 'help' to see available commands.", 22);
     printf(RST);
     print_separator();

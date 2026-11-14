@@ -44,9 +44,25 @@ static void reset_level(GameState *gs, int level_id) {
     gs->game_over       = 0;
     gs->level_start     = time(NULL);
 
+    /* Per-level navigation and mechanic state. These used to leak across
+       levels: a stale nodes_connected bitmask let players skip routing
+       requirements on later levels whose node indices happened to match. */
+    gs->nodes_connected = 1;      /* entry node (index 0) counts as visited */
+    gs->last_node       = 0;
+    gs->last_cmd_hash   = 0;
+    gs->repeat_streak   = 0;
+    gs->level_cmds      = 0;
+    gs->knock_open      = 0;
+    gs->wiped           = 0;
+    gs->keypad_fails    = 0;
+    gs->trace_deadline  = 0;
+    gs->load_pending    = 0;
+
     for (int i = 0; i < MAX_NODES; i++) {
         gs->node_files_unlocked[i]  = 0;
         gs->node_files_decrypted[i] = 0;
+        gs->knock_progress[i]       = 0;
+        for (int j = 0; j < MAX_FILES; j++) gs->file_layers[i][j] = 0;
     }
 
     /* Mark only the entry node as discovered so the player starts with a
@@ -60,9 +76,16 @@ static void reset_level(GameState *gs, int level_id) {
    newly unlocked commands, resets state for the new level, and prints its
    mission briefing. The slow-print lines give a brief narrative pause between
    levels that reinforces the sense of moving to a new target. */
-static void level_transition(GameState *gs, int next) {
+static void level_transition(GameState *gs, int next, unsigned int prev_cmds,
+                             int keep_inventory) {
     printf("\n");
     print_separator();
+    if (next == 25) {
+        printf(MAG);
+        slow_print("[????] ...the Architect is dead. So why is the network still talking?", 22);
+        slow_print("[????] A dead-man seed just fired. Codename: LAZARUS.", 22);
+        printf(RST);
+    }
     slow_print("[SYS] Level complete. Pivoting to next target...", 28);
     slow_print("[NET] Routing to next system...",                   28);
     slow_print("[NET] Connection established.",                     28);
@@ -70,9 +93,16 @@ static void level_transition(GameState *gs, int next) {
     print_separator();
     printf("\n");
 
-    unsigned int prev = get_level(gs->current_level)->available_cmds;
-    unsigned int nxt  = get_level(next)->available_cmds;
-    show_new_commands(prev, nxt);
+    show_new_commands(prev_cmds, get_level(next)->available_cmds);
+
+    /* Fragments never carry between targets, so start each level with an
+       empty inventory. This keeps 'combine 1 2 3' slot numbers matching the
+       walkthroughs and stops the inventory filling up over a long run. A
+       loadgame restart keeps the inventory it just restored. */
+    if (!keep_inventory && gs->inv_count > 0) {
+        gs->inv_count = 0;
+        printf(DIM "[SYS] Inventory purged for the new target.\n" RST);
+    }
 
     reset_level(gs, next);
     print_mission_briefing(get_level(next));
@@ -93,13 +123,18 @@ static void show_win_screen(GameState *gs) {
     slow_print("  ╚══════════════════════════════════════════════════════╝", 6);
     printf(RST "\n");
 
+    printf(MAG);
+    slow_print("  [ZERO] You logged in as yourself. The Architect was always GHOST.", 18);
+    slow_print("  [ZERO] Every target was a mirror. The loop is closed.", 18);
+    printf(RST "\n");
+
     int duration = (int)(time(NULL) - gs->game_start);
     int mins     = duration / 60;
     int secs     = duration % 60;
 
     printf(GRN "  ╔══════════════════════════════════════════════════════╗\n" RST);
     printf(GRN "  ║  TERMINAL BREACH -- COMPLETE                        ║\n" RST);
-    printf(GRN "  ║  All 16 systems compromised. You are unstoppable.   ║\n" RST);
+    printf(GRN "  ║  All %2d systems compromised. LAZARUS stays buried.  ║\n" RST, TOTAL_LEVELS);
     printf(GRN "  ╠══════════════════════════════════════════════════════╣\n" RST);
     printf(GRN "  ║  FINAL SCORE    : %-7d pts                       ║\n" RST, gs->score);
     printf(GRN "  ║  Total fails    : %-4d                             ║\n" RST, gs->total_fails);
@@ -109,7 +144,7 @@ static void show_win_screen(GameState *gs) {
     printf(GRN "  ║  Level scores:                                      ║\n" RST);
     for (int i = 0; i < TOTAL_LEVELS; i++) {
         Level *lv = get_level(i);
-        printf(GRN "  ║    L%-2d %-21s %5d pts              ║\n" RST,
+        printf(GRN "  ║    L%-2d %-27.27s %6d pts       ║\n" RST,
                i + 1, lv->name, gs->level_scores[i]);
     }
     printf(GRN "  ╠══════════════════════════════════════════════════════╣\n" RST);
@@ -117,9 +152,9 @@ static void show_win_screen(GameState *gs) {
     /* Rank is determined by total login failures across the entire run. */
     const char *rank;
     if      (gs->total_fails == 0)  rank = "GHOST LEGEND -- Flawless run!";
-    else if (gs->total_fails <= 3)  rank = "PHANTOM      -- Near perfect!";
-    else if (gs->total_fails <= 8)  rank = "SPECTRE      -- Well played.";
-    else if (gs->total_fails <= 15) rank = "AGENT        -- Good effort.";
+    else if (gs->total_fails <= 4)  rank = "PHANTOM      -- Near perfect!";
+    else if (gs->total_fails <= 10) rank = "SPECTRE      -- Well played.";
+    else if (gs->total_fails <= 20) rank = "AGENT        -- Good effort.";
     else                            rank = "ROOKIE       -- Keep training.";
 
     printf(GRN "  ║  Rank: %-44s║\n" RST, rank);
@@ -153,13 +188,22 @@ int main(void) {
     GameState gs;
     memset(&gs, 0, sizeof(gs));
     gs.game_start = time(NULL);
-    reset_level(&gs, 0);
+
+    /* Developer/practice shortcut: TB_START_LEVEL=26 ./terminal_breach
+       jumps straight to a level (1-based). Scores for skipped levels stay 0. */
+    int start = 0;
+    const char *sl = getenv("TB_START_LEVEL");
+    if (sl) {
+        int v = atoi(sl) - 1;
+        if (v >= 0 && v < TOTAL_LEVELS) start = v;
+    }
+    reset_level(&gs, start);
 
     boot_sequence();
-    print_mission_briefing(get_level(0));
+    print_mission_briefing(get_level(start));
 
     char input[INPUT_BUF];
-    char prompt[128];
+    char prompt[256];
 
     while (1) {
         get_prompt(&gs, prompt, sizeof(prompt));
@@ -172,7 +216,16 @@ int main(void) {
             break;
         }
 
+        unsigned int cmds_before = get_level(gs.current_level)->available_cmds;
         process_command(&gs, input);
+
+        /* loadgame: restart the saved level cleanly (previously this jumped
+           to saved_level + 1, silently skipping a level). */
+        if (gs.load_pending) {
+            gs.load_pending = 0;
+            level_transition(&gs, gs.current_level, cmds_before, 1);
+            continue;
+        }
 
         if (gs.game_over) {
             show_game_over(&gs);
@@ -185,7 +238,7 @@ int main(void) {
                 show_win_screen(&gs);
                 break;
             }
-            level_transition(&gs, next);
+            level_transition(&gs, next, cmds_before, 0);
         }
     }
 

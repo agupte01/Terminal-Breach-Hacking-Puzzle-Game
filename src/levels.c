@@ -1,5 +1,5 @@
 /*
- * levels.c — Level definitions for all 16 stages of Terminal Breach.
+ * levels.c — Level definitions for all 35 stages of Terminal Breach.
  *
  * Each init_levelN function initialises one Level struct in the global array,
  * populating its nodes and files using the shorthand macros defined below.
@@ -23,9 +23,34 @@ static void add_node(Level *l, const char *ip, const char *hostname,
     strncpy(l->nodes[i].ip,          ip,       MAX_NODE_IP   - 1);
     strncpy(l->nodes[i].hostname,    hostname, MAX_NODE_NAME - 1);
     strncpy(l->nodes[i].description, desc,     255);
-    l->nodes[i].min_perm   = min_perm;
-    l->nodes[i].is_entry   = is_entry;
-    l->nodes[i].file_count = 0;
+    l->nodes[i].min_perm    = min_perm;
+    l->nodes[i].is_entry    = is_entry;
+    l->nodes[i].file_count  = 0;
+    l->nodes[i].is_honeypot = 0;
+    l->nodes[i].route_prev[0] = '\0';
+    l->nodes[i].is_watched   = 0;
+    l->nodes[i].has_logs     = 0;
+    l->nodes[i].trip_seconds = 0;
+    l->nodes[i].knock_seq[0] = '\0';
+}
+
+/* Mechanic markers for the most recently added node (levels 26-35). */
+static void mark_watched(Level *l) { l->nodes[l->node_count - 1].is_watched = 1; }
+static void mark_logs(Level *l)    { l->nodes[l->node_count - 1].has_logs   = 1; }
+static void set_trip(Level *l, int secs) { l->nodes[l->node_count - 1].trip_seconds = secs; }
+static void set_knock(Level *l, const char *seq) {
+    strncpy(l->nodes[l->node_count - 1].knock_seq, seq, 47);
+}
+
+/* Marks the most-recently added node as a honeypot (heavy detection on connect). */
+static void mark_honeypot(Level *l) {
+    if (l->node_count > 0) l->nodes[l->node_count - 1].is_honeypot = 1;
+}
+
+/* Marks the most-recently added node as requiring a prior connection to 'prev_host'. */
+static void route_after(Level *l, const char *prev_host) {
+    if (l->node_count > 0)
+        strncpy(l->nodes[l->node_count - 1].route_prev, prev_host, MAX_NODE_NAME - 1);
 }
 
 /* Appends a file to a specific node's file list. All file attributes are set
@@ -40,12 +65,36 @@ static void add_file(Level *l, int node_idx,
     int i = n->file_count++;
     strncpy(n->files[i].name,        name,    MAX_FILENAME - 1);
     strncpy(n->files[i].content,     content, MAX_CONTENT  - 1);
-    n->files[i].min_perm    = min_perm;
-    n->files[i].hidden      = hidden;
-    n->files[i].encrypted   = encrypted;
-    n->files[i].puzzle_type = puzzle_type;
+    n->files[i].min_perm     = min_perm;
+    n->files[i].hidden       = hidden;
+    n->files[i].encrypted    = encrypted;
+    n->files[i].puzzle_type  = puzzle_type;
     n->files[i].cipher_shift = cipher_shift;
-    n->files[i].locked      = locked;
+    n->files[i].locked       = locked;
+    n->files[i].cipher_key[0]= '\0';
+}
+
+/* Variant that also stores a cipher key (used by XOR and Vigenère puzzles). */
+static void add_file_keyed(Level *l, int node_idx,
+                           const char *name, const char *content,
+                           Permission min_perm, int hidden,
+                           int puzzle_type, const char *key, int locked) {
+    add_file(l, node_idx, name, content, min_perm, hidden, 1, puzzle_type, 0, locked);
+    NetworkNode *n = &l->nodes[node_idx];
+    int i = n->file_count - 1;
+    strncpy(n->files[i].cipher_key, key ? key : "", 63);
+}
+
+/* Fully general file constructor used by the later levels: any puzzle type,
+   optional key/layer spec, optional lock, and optional keypad code. */
+static void add_file_full(Level *l, int node_idx, const char *name, const char *content,
+                          int hidden, int puzzle_type, int shift, const char *key,
+                          int locked, const char *pin) {
+    add_file(l, node_idx, name, content, PERM_GUEST, hidden,
+             puzzle_type != PUZZLE_NONE, puzzle_type, shift, locked);
+    GameFile *f = &l->nodes[node_idx].files[l->nodes[node_idx].file_count - 1];
+    strncpy(f->cipher_key,  key ? key : "", 63);
+    strncpy(f->unlock_code, pin ? pin : "", 15);
 }
 
 /* Shorthand aliases used inside every init_levelN function.
@@ -64,6 +113,23 @@ static void add_file(Level *l, int node_idx,
 #define FR(nm,ct)            add_file(l,n,nm,ct,PUB,0,1,PUZZLE_REVERSE,0, 0) /* reverse text               */
 #define FLR(nm,ct)           add_file(l,n,nm,ct,PUB,0,1,PUZZLE_REVERSE,0, 1) /* reverse text + locked      */
 #define FB(nm,ct)            add_file(l,n,nm,ct,PUB,0,1,PUZZLE_BINARY, 0, 0) /* binary-to-ASCII            */
+#define FX(nm,ct)            add_file(l,n,nm,ct,PUB,0,1,PUZZLE_HEX,    0, 0) /* hex-to-ASCII               */
+#define FB64(nm,ct)          add_file(l,n,nm,ct,PUB,0,1,PUZZLE_BASE64, 0, 0) /* base64                     */
+#define FXOR(nm,ct,k)        add_file_keyed(l,n,nm,ct,PUB,0,PUZZLE_XOR,    k, 0) /* XOR cipher              */
+#define FVIG(nm,ct,k)        add_file_keyed(l,n,nm,ct,PUB,0,PUZZLE_VIGENERE,k, 0) /* Vigenère cipher        */
+#define FUVIG(nm,ct,k)       add_file_keyed(l,n,nm,ct,USR,0,PUZZLE_VIGENERE,k, 0) /* Vigenère, USER         */
+#define FHLB(nm,ct)          add_file(l,n,nm,ct,PUB,1,1,PUZZLE_BINARY, 0, 1) /* hidden+locked binary       */
+#define FHLR(nm,ct)          add_file(l,n,nm,ct,PUB,1,1,PUZZLE_REVERSE,0, 1) /* hidden+locked reverse      */
+#define FHLXOR(nm,ct,k)      add_file_keyed(l,n,nm,ct,PUB,1,PUZZLE_XOR,    k, 1) /* hidden+locked XOR       */
+#define FLB64(nm,ct)         add_file(l,n,nm,ct,PUB,0,1,PUZZLE_BASE64, 0, 1) /* locked base64              */
+#define FLX(nm,ct)           add_file(l,n,nm,ct,PUB,0,1,PUZZLE_HEX,    0, 1) /* locked hex                 */
+/* Levels 26-35 */
+#define FAT(nm,ct)           add_file_full(l,n,nm,ct,0,PUZZLE_ATBASH,0,NULL,0,NULL)  /* Atbash            */
+#define FRL(nm,ct,r)         add_file_full(l,n,nm,ct,0,PUZZLE_RAIL,  r,NULL,0,NULL)  /* rail fence        */
+#define FON(nm,ct,spec)      add_file_full(l,n,nm,ct,0,PUZZLE_ONION, 0,spec,0,NULL)  /* onion layers      */
+#define FPIN(nm,ct,t,sh,k,pin) add_file_full(l,n,nm,ct,0,t,sh,k,1,pin)               /* keypad-locked     */
+#define FLOCK(nm,ct,t,sh,k)  add_file_full(l,n,nm,ct,0,t,sh,k,1,NULL)                /* bruteforce-locked */
+#define FHLOCK(nm,ct,t,sh,k) add_file_full(l,n,nm,ct,1,t,sh,k,1,NULL)                /* hidden + locked   */
 
 /* Level 0 — Tutorial System (EASY)
    A single-node sandbox with no puzzles, no timer, and a generous detection
@@ -578,7 +644,7 @@ static void init_level7(void) {
     Level *l = &levels[7];
     memset(l, 0, sizeof(*l));
     l->id = 7;
-    strncpy(l->name,     "AI Core System [FINAL]",           MAX_LEVEL_NAME - 1);
+    strncpy(l->name,     "AI Core System",                   MAX_LEVEL_NAME - 1);
     strncpy(l->difficulty, "EXTREME",                        15);
     strncpy(l->objective,
         "FINAL TARGET: AI Core neural processing system.\n"
@@ -1625,7 +1691,1723 @@ static void init_level14(void) {
         "Enter this as the login password to deactivate.\n");
 }
 
-/* Initialises all 16 levels in order. Called once at program startup before
+/* ====================================================================
+ * Levels 16–25: MYTHIC through TRANSCENDENT tiers.
+ * These levels introduce four new cipher families (XOR, Vigenère, hex,
+ * base64), routing-order requirements, honeypot decoy nodes, log-grep
+ * forensics, multi-fragment key assembly via 'combine', and on the
+ * final stage adaptive detection that punishes repeated commands.
+ * ==================================================================== */
+
+/* Level 16 (idx 15) — Crypto Exchange Heist (MYTHIC)
+   Drain a cold wallet from ZenithCoin. Four nodes, three new cipher types
+   stacked across separate fragments. Player joins fragments via inventory
+   and 'combine' to assemble ZEN1TH_C0LD_V@ULT. */
+static void init_level15(void) {
+    Level *l = &levels[15];
+    memset(l, 0, sizeof(*l));
+    l->id = 15;
+    strncpy(l->name,     "Crypto Exchange Heist", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "MYTHIC",              15);
+    strncpy(l->objective,
+        "ZenithCoin's cold-wallet vault is reachable through\n"
+        "their HSM bridge. Three fragments of the vault key\n"
+        "are scattered across trading-engine, hsm-bridge, and\n"
+        "cold-vault. Combine them to assemble the master key.\n"
+        "New ciphers: hex bytes, XOR, base64. Use 'combine'.", 511);
+    strncpy(l->warnings,
+        "Exchange runs intrusion analytics — keep moves tight.", 255);
+    strncpy(l->solution_password, "ZEN1TH_C0LD_V@ULT", 63);
+    strncpy(l->user_password,     "trader_oa",         63);
+    strncpy(l->hint,
+        "HINT: User cred is trader_oa.\n"
+        "Frag1 hex on trading-engine -> ZEN1TH_\n"
+        "Frag2 XOR(key=ZENITH) on hsm-bridge -> C0LD_\n"
+        "Frag3 Caesar-13 on cold-vault -> V@ULT\n"
+        "save each fragment, then 'combine' for the full key.", MAX_HINT - 1);
+    l->max_attempts       = 4;
+    l->detection_max      = 80;
+    l->detection_per_fail = 20;
+    l->has_timer          = 1;
+    l->timer_seconds      = 240;
+    l->available_cmds     = CMD_BASIC | CMD_HINT | CMD_LOGIN | CMD_LOGOUT
+                          | CMD_DECRYPT | CMD_SAVE | CMD_INVENTORY
+                          | CMD_SCAN    | CMD_CONNECT | CMD_COMBINE | CMD_DROP
+                          | CMD_SAVEGAME | CMD_LOADGAME;
+
+    int n = 0;
+    add_node(l, "203.0.113.10", "gateway",
+             "ZenithCoin public API gateway.", PUB, 1);
+    F("welcome.txt",
+        "ZenithCoin Exchange — Public Gateway\n"
+        "Authorised personnel only. Trading API on this segment.\n");
+    F("staff_memo.txt",
+        "Memo to ops: trader_oa is the read-only account on the\n"
+        "trading engine. Use it for monitoring, not for execution.\n");
+    F("network_map.txt",
+        "Internal segment map:\n"
+        "  10.10.10.20  trading-engine  (USER)\n"
+        "  10.10.10.30  hsm-bridge      (USER)\n"
+        "  10.10.10.40  cold-vault      (USER)\n");
+
+    n = 1;
+    add_node(l, "10.10.10.20", "trading-engine",
+             "Order matching engine.", USR, 0);
+    F("README.txt",
+        "TRADING ENGINE — fragment 1 of vault key stored in frag1.hex.\n"
+        "Format: hex bytes (space-separated) -> ASCII.\n");
+    FX("frag1.hex", "5A 45 4E 31 54 48 5F");
+
+    n = 2;
+    add_node(l, "10.10.10.30", "hsm-bridge",
+             "HSM XOR-key relay.", USR, 0);
+    F("README.txt",
+        "HSM BRIDGE — fragment 2 in frag2.xor.\n"
+        "Cipher: XOR with the bridge identity key (the exchange name).\n");
+    FXOR("frag2.xor", "19 75 02 0D 0B", "ZENITH");
+
+    n = 3;
+    add_node(l, "10.10.10.40", "cold-vault",
+             "Cold storage authoriser.", USR, 0);
+    F("README.txt",
+        "COLD VAULT — fragment 3 in frag3.enc.\n"
+        "Legacy operator note: \"shift 13 — half the alphabet.\"\n");
+    FC("frag3.enc", "I@HYG", 13);
+    F("assembly_hint.txt",
+        "Concatenate fragment 1 + 2 + 3 in order. Use:\n"
+        "  combine 1 2 3   (with each fragment saved to inventory)\n");
+}
+
+/* Level 17 (idx 16) — Industrial SCADA Sabotage (MYTHIC)
+   Pump-station control net. Vigenère + reverse, plus a routing constraint
+   on plc-core: must traverse historian first to receive valid PLC tags. */
+static void init_level16(void) {
+    Level *l = &levels[16];
+    memset(l, 0, sizeof(*l));
+    l->id = 16;
+    strncpy(l->name,     "Industrial SCADA Sabotage", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "MYTHIC",                  15);
+    strncpy(l->objective,
+        "Pump-station control net for a city water grid.\n"
+        "Two fragments: a Vigenère-encoded set-point block on\n"
+        "rtu-1, and a reverse-encoded override token on rtu-2.\n"
+        "PLC core enforces routing -- visit historian first.", 511);
+    strncpy(l->warnings,
+        "Bad routing fries the PLC. Mind your hops.", 255);
+    strncpy(l->solution_password, "SET_P01NT_OVERRIDE", 63);
+    strncpy(l->user_password,     "plc_op_3",           63);
+    strncpy(l->hint,
+        "HINT: User cred is plc_op_3 (visible on scada-master).\n"
+        "Frag1 Vigenère(key=HYDRA) on rtu-1 -> SET_P01NT_\n"
+        "Frag2 reverse on rtu-2 -> OVERRIDE\n"
+        "plc-core requires prior visit to historian.\n"
+        "combine 1 2 -> SET_P01NT_OVERRIDE", MAX_HINT - 1);
+    l->max_attempts       = 4;
+    l->detection_max      = 70;
+    l->detection_per_fail = 25;
+    l->has_timer          = 1;
+    l->timer_seconds      = 240;
+    l->available_cmds     = CMD_BASIC | CMD_HINT | CMD_LOGIN | CMD_LOGOUT
+                          | CMD_DECRYPT | CMD_SAVE | CMD_INVENTORY
+                          | CMD_SCAN    | CMD_CONNECT | CMD_COMBINE | CMD_DROP
+                          | CMD_SAVEGAME | CMD_LOADGAME;
+
+    int n = 0;
+    add_node(l, "172.16.0.10", "scada-master",
+             "Operator HMI — control room.", PUB, 1);
+    F("login_banner.txt",
+        "SCADA HMI v4.1 — operator credential: plc_op_3\n"
+        "All commands logged. Tampering is a federal offence.\n");
+    F("topology.txt",
+        "Control segment:\n"
+        "  172.16.0.20 rtu-1       (USER)\n"
+        "  172.16.0.21 rtu-2       (USER)\n"
+        "  172.16.0.30 historian   (USER)\n"
+        "  172.16.0.99 plc-core    (USER, routed via historian)\n");
+
+    n = 1;
+    add_node(l, "172.16.0.20", "rtu-1", "Remote terminal unit 1.", USR, 0);
+    F("README.txt",
+        "RTU-1 — fragment 1 in setpoint.vig.\n"
+        "Field-team key sticker: \"HYDRA pump set\".\n");
+    FVIG("setpoint.vig", "ZCW_G01NA_", "HYDRA");
+
+    n = 2;
+    add_node(l, "172.16.0.21", "rtu-2", "Remote terminal unit 2.", USR, 0);
+    F("README.txt",
+        "RTU-2 — fragment 2 in token.rev (reverse text).\n");
+    FR("token.rev", "EDIRREVO");
+
+    n = 3;
+    add_node(l, "172.16.0.30", "historian", "Plant historian DB.", USR, 0);
+    F("plc_tags.txt",
+        "PLC TAG VALIDATION REGISTRY\n"
+        "Connection to plc-core requires prior historian session.\n"
+        "Routing tag emitted on access. Do not skip.\n");
+
+    n = 4;
+    add_node(l, "172.16.0.99", "plc-core",
+             "PLC programmable logic controller.", USR, 0);
+    route_after(l, "historian");
+    F("core_status.txt",
+        "PLC CORE — set-point write authority.\n"
+        "Submit the assembled SET_P01NT_OVERRIDE key.\n");
+    F("assembly_hint.txt",
+        "Two fragments. combine 1 2 in inventory order.\n");
+}
+
+/* Level 18 (idx 17) — Telecom Backbone (MYTHIC++)
+   Tier-1 ISP core. Three fragments: base64, hex, XOR. Transit-core requires
+   prior bgp-reflector visit to enforce realistic AS-path traversal. */
+static void init_level17(void) {
+    Level *l = &levels[17];
+    memset(l, 0, sizeof(*l));
+    l->id = 17;
+    strncpy(l->name,     "Telecom Backbone Hijack", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "MYTHIC++",              15);
+    strncpy(l->objective,
+        "Hijack a tier-1 backbone via the BGP route reflector.\n"
+        "Three encoded fragments across the transit fabric --\n"
+        "base64, raw hex, XOR. Transit-core only accepts the\n"
+        "session if you came in through bgp-reflector first.", 511);
+    strncpy(l->warnings, "TIMED 200s | BRUTEFORCE may be needed", 255);
+    strncpy(l->solution_password, "BGP_HIJACK_PRIME", 63);
+    strncpy(l->user_password,     "net_eng_99",       63);
+    strncpy(l->hint,
+        "HINT: User cred net_eng_99 (edge-router peering banner).\n"
+        "Frag1 base64 on bgp-reflector -> BGP_\n"
+        "Frag2 hex on transit-core -> HIJACK_\n"
+        "Frag3 XOR(key=AS1337) on peering-x -> PRIME\n"
+        "Routing: edge-router -> bgp-reflector -> transit-core.\n"
+        "combine 1 2 3 -> BGP_HIJACK_PRIME", MAX_HINT - 1);
+    l->max_attempts       = 4;
+    l->detection_max      = 70;
+    l->detection_per_fail = 20;
+    l->has_timer          = 1;
+    l->timer_seconds      = 200;
+    l->available_cmds     = CMD_BASIC | CMD_HINT | CMD_LOGIN | CMD_LOGOUT
+                          | CMD_DECRYPT | CMD_SAVE | CMD_INVENTORY
+                          | CMD_SCAN    | CMD_CONNECT | CMD_COMBINE | CMD_DROP
+                          | CMD_BRUTEFORCE
+                          | CMD_SAVEGAME | CMD_LOADGAME;
+
+    int n = 0;
+    add_node(l, "10.20.0.1", "edge-router",
+             "Customer-edge router.", PUB, 1);
+    F("peering_banner.txt",
+        "Tier-1 backbone — restricted. Engineering creds: net_eng_99\n"
+        "AS path validation enforced on transit core.\n");
+    F("network_map.txt",
+        "  10.20.0.10  bgp-reflector  (USER)\n"
+        "  10.20.0.20  transit-core   (USER, routed via bgp-reflector)\n"
+        "  10.20.0.30  peering-x      (USER)\n"
+        "  10.20.0.40  route-optimizer(USER)\n");
+
+    n = 1;
+    add_node(l, "10.20.0.10", "bgp-reflector",
+             "BGP route reflector.", USR, 0);
+    F("README.txt",
+        "BGP-RR — fragment 1 in frag1.b64 (base64).\n");
+    FB64("frag1.b64", "QkdQXw==");
+
+    n = 2;
+    add_node(l, "10.20.0.20", "transit-core",
+             "Transit core router.", USR, 0);
+    route_after(l, "bgp-reflector");
+    F("README.txt",
+        "TRANSIT — fragment 2 in frag2.hex (raw hex bytes).\n");
+    FX("frag2.hex", "48 49 4A 41 43 4B 5F");
+
+    n = 3;
+    add_node(l, "10.20.0.30", "peering-x",
+             "Peering exchange interface.", USR, 0);
+    F("README.txt",
+        "PEERING-X — fragment 3 in frag3.xor.\n"
+        "Cipher key is our peering AS identifier (AS#### with code).\n");
+    FXOR("frag3.xor", "11 01 78 7E 76", "AS1337");
+
+    n = 4;
+    add_node(l, "10.20.0.40", "route-optimizer",
+             "Route optimisation appliance.", USR, 0);
+    F("README.txt",
+        "OPTIMIZER -- diagnostics only. No fragments here.\n"
+        "Use bruteforce on this node only if peering-x rejects you.\n");
+}
+
+/* Level 19 (idx 18) — Spy Satellite Imagery Vault (APEX)
+   Three encoded fragments: Vigenère, hex, reverse. */
+static void init_level18(void) {
+    Level *l = &levels[18];
+    memset(l, 0, sizeof(*l));
+    l->id = 18;
+    strncpy(l->name,     "Spy Satellite Imagery Vault", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "APEX",                      15);
+    strncpy(l->objective,
+        "Recover the KEYHOLE recon archive. Ground-station\n"
+        "issues USER creds; the key splits across uplink-relay\n"
+        "(Vigenère), decryption-rig (hex), and one of two image\n"
+        "vaults (reverse). One vault is stale -- pick the live one.", 511);
+    strncpy(l->warnings, "Detection ceiling is brutal here.", 255);
+    strncpy(l->solution_password, "KEYHOLE_RECON_X9", 63);
+    strncpy(l->user_password,     "ground_op_7",      63);
+    strncpy(l->hint,
+        "HINT: User cred ground_op_7 (groundstation banner).\n"
+        "Frag1 Vigenère(key=ORBIT) on uplink-relay -> KEYHOLE_\n"
+        "Frag2 hex on decryption-rig -> RECON_\n"
+        "Frag3 reverse on vault-A    -> X9\n"
+        "(vault-B is decoy). combine 1 2 3 -> KEYHOLE_RECON_X9", MAX_HINT - 1);
+    l->max_attempts       = 3;
+    l->detection_max      = 60;
+    l->detection_per_fail = 30;
+    l->has_timer          = 1;
+    l->timer_seconds      = 200;
+    l->available_cmds     = CMD_BASIC | CMD_HINT | CMD_LOGIN | CMD_LOGOUT
+                          | CMD_DECRYPT | CMD_SAVE | CMD_INVENTORY
+                          | CMD_SCAN    | CMD_CONNECT | CMD_COMBINE | CMD_DROP
+                          | CMD_SAVEGAME | CMD_LOADGAME;
+
+    int n = 0;
+    add_node(l, "198.51.100.1", "ground-station",
+             "Satellite ground station.", PUB, 1);
+    F("welcome.txt",
+        "KEYHOLE GROUND OPS — ops cred: ground_op_7\n"
+        "Vault is divided into two compartments. Only one is live.\n"
+        "Cross-check vault status before pulling fragments.\n");
+    F("topology.txt",
+        "  10.50.0.10 uplink-relay    (USER)\n"
+        "  10.50.0.20 decryption-rig  (USER)\n"
+        "  10.50.0.30 vault-A         (USER)\n"
+        "  10.50.0.40 vault-B         (USER, decoy)\n");
+
+    n = 1;
+    add_node(l, "10.50.0.10", "uplink-relay",
+             "Satellite uplink relay.", USR, 0);
+    F("README.txt",
+        "RELAY — fragment 1 in keyhole.vig.\n"
+        "Cipher key is our orbital track designator.\n");
+    FVIG("keyhole.vig", "YVZPHZV_", "ORBIT");
+
+    n = 2;
+    add_node(l, "10.50.0.20", "decryption-rig",
+             "Decryption rig.", USR, 0);
+    F("README.txt", "RIG — fragment 2 in recon.hex.\n");
+    FX("recon.hex", "52 45 43 4F 4E 5F");
+
+    n = 3;
+    add_node(l, "10.50.0.30", "vault-A", "Vault A — live.", USR, 0);
+    F("README.txt", "VAULT A — live. Fragment 3 in tail.rev.\n");
+    FR("tail.rev", "9X");
+
+    n = 4;
+    add_node(l, "10.50.0.40", "vault-B", "Vault B — stale.", USR, 0);
+    F("README.txt",
+        "VAULT B — last sync 47 days ago. Frags here are stale.\n"
+        "Stale fragment: 7Q (will not assemble).\n");
+    FR("tail.rev", "Q7");
+}
+
+/* Level 20 (idx 19) — Forensic Counter-Hack (APEX)
+   Someone is hacking back. Use grep on a busy auth log to find the
+   attacker's window — the seconds digit of the timestamp is the Caesar
+   shift for the next fragment. */
+static void init_level19(void) {
+    Level *l = &levels[19];
+    memset(l, 0, sizeof(*l));
+    l->id = 19;
+    strncpy(l->name,     "Forensic Counter-Hack", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "APEX",                15);
+    strncpy(l->objective,
+        "Hostile is exfiltrating from your honeypot. Trace them\n"
+        "via auth logs (grep), derive the cipher shift from the\n"
+        "intrusion timestamp, decode the response packet, then\n"
+        "burn their C2. New tool: grep <pattern> <file>.", 511);
+    strncpy(l->warnings, "TIMED 300s. Hostile is active.", 255);
+    strncpy(l->solution_password, "BURN_THE_C2_NOW", 63);
+    strncpy(l->user_password,     "ir_analyst",      63);
+    strncpy(l->hint,
+        "HINT: User cred ir_analyst.\n"
+        "grep KEY_MISMATCH on /var/log/auth on relay-honey.\n"
+        "Match line shows '...:09]' -- shift = 9.\n"
+        "Frag1 Caesar-9 on attacker-relay -> BURN_THE_\n"
+        "Frag2 hex on attacker-c2          -> C2_NOW\n"
+        "combine 1 2 -> BURN_THE_C2_NOW", MAX_HINT - 1);
+    l->max_attempts       = 4;
+    l->detection_max      = 70;
+    l->detection_per_fail = 20;
+    l->has_timer          = 1;
+    l->timer_seconds      = 300;
+    l->available_cmds     = CMD_BASIC | CMD_HINT | CMD_LOGIN | CMD_LOGOUT
+                          | CMD_DECRYPT | CMD_SAVE | CMD_INVENTORY
+                          | CMD_SCAN    | CMD_CONNECT | CMD_COMBINE | CMD_DROP
+                          | CMD_GREP
+                          | CMD_SAVEGAME | CMD_LOADGAME;
+
+    int n = 0;
+    add_node(l, "10.0.0.66", "ir-bastion",
+             "Incident-response jump box.", PUB, 1);
+    F("welcome.txt",
+        "IR Bastion — analyst credential: ir_analyst\n"
+        "Hostile traffic visible on relay-honey logs. Use grep.\n");
+    F("topology.txt",
+        "  10.0.0.67 relay-honey      (USER, log-heavy)\n"
+        "  10.0.0.68 attacker-relay   (USER)\n"
+        "  10.0.0.69 attacker-c2      (USER)\n"
+        "  10.0.0.70 identity-leak    (USER)\n");
+
+    n = 1;
+    add_node(l, "10.0.0.67", "relay-honey",
+             "Honeypot relay (logs).", USR, 0);
+    F("notes.txt",
+        "Filter the busy auth log to find the AUTH_FAIL line\n"
+        "with reason=KEY_MISMATCH. The seconds field of that\n"
+        "timestamp is the Caesar shift for fragment 1.\n");
+    F("auth.log",
+        "[2026-04-15 03:11:22] AUTH_OK   src=10.0.0.4   user=cron\n"
+        "[2026-04-15 03:12:01] AUTH_OK   src=10.0.0.4   user=cron\n"
+        "[2026-04-15 03:13:55] AUTH_FAIL src=10.0.0.21  user=admin reason=BAD_PW\n"
+        "[2026-04-15 03:14:09] AUTH_FAIL src=66.249.13.37 user=root reason=KEY_MISMATCH\n"
+        "[2026-04-15 03:14:31] AUTH_OK   src=10.0.0.4   user=cron\n"
+        "[2026-04-15 03:18:02] AUTH_FAIL src=10.0.0.55  user=guest reason=BAD_PW\n"
+        "[2026-04-15 03:22:11] AUTH_OK   src=10.0.0.4   user=cron\n");
+
+    n = 2;
+    add_node(l, "10.0.0.68", "attacker-relay",
+             "Attacker relay.", USR, 0);
+    F("README.txt",
+        "RELAY — fragment 1 in burn.enc (Caesar; shift=seconds field).\n");
+    FC("burn.enc", "KDAW_CQN_", 9);
+
+    n = 3;
+    add_node(l, "10.0.0.69", "attacker-c2",
+             "Attacker C2.", USR, 0);
+    F("README.txt", "C2 — fragment 2 in c2.hex.\n");
+    FX("c2.hex", "43 32 5F 4E 4F 57");
+
+    n = 4;
+    add_node(l, "10.0.0.70", "identity-leak",
+             "Attacker dossier.", USR, 0);
+    F("dossier.txt",
+        "Attacker handle: 'spectre-9'. No useful key data here.\n");
+}
+
+/* Level 21 (idx 20) — Darknet Auction (APEX+)
+   6 nodes, two of which are honeypot decoys. Bruteforce + override required. */
+static void init_level20(void) {
+    Level *l = &levels[20];
+    memset(l, 0, sizeof(*l));
+    l->id = 20;
+    strncpy(l->name,     "Darknet Auction", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "APEX+",         15);
+    strncpy(l->objective,
+        "Bid for a zero-day. Sellers run honeypots to dox bidders.\n"
+        "Two decoy nodes will spike detection -- avoid them.\n"
+        "Frag1 XOR on staging, frag2 reverse behind override on\n"
+        "payload-vault. Bruteforce stake.locked first.", 511);
+    strncpy(l->warnings,
+        "HONEYPOTS active | bruteforce + override required", 255);
+    strncpy(l->solution_password, "Z3R0D@Y_W1NN3R", 63);
+    strncpy(l->user_password,     "dn_bidder",     63);
+    strncpy(l->hint,
+        "HINT: User cred dn_bidder.\n"
+        "AVOID escrow and buyer-mirror -- both are honeypots.\n"
+        "bruteforce on staging unlocks stake.locked.\n"
+        "Frag1 XOR(key=STAKE) -> Z3R0D@Y_\n"
+        "override on payload-vault unlocks .winner_frag\n"
+        "Frag2 reverse on .winner_frag -> W1NN3R\n"
+        "combine 1 2 -> Z3R0D@Y_W1NN3R", MAX_HINT - 1);
+    l->max_attempts       = 3;
+    l->detection_max      = 130;  /* bf 40 + ov 60 used to hit the 100 cap exactly */
+    l->detection_per_fail = 20;
+    l->has_timer          = 1;
+    l->timer_seconds      = 240;
+    l->available_cmds     = CMD_BASIC | CMD_HINT | CMD_LOGIN | CMD_LOGOUT
+                          | CMD_DECRYPT | CMD_SAVE | CMD_INVENTORY
+                          | CMD_SCAN    | CMD_CONNECT | CMD_COMBINE | CMD_DROP
+                          | CMD_BRUTEFORCE | CMD_OVERRIDE
+                          | CMD_SAVEGAME | CMD_LOADGAME;
+
+    int n = 0;
+    add_node(l, "127.42.0.1", "auction-board",
+             "Darknet auction board.", PUB, 1);
+    F("welcome.txt",
+        "Darknet auction — bidder cred: dn_bidder\n"
+        "WARNING: two listings are honeypots. Verify TTL on scan.\n");
+    F("topology.txt",
+        "  127.42.0.10 broker         (USER)\n"
+        "  127.42.0.20 escrow         (USER, decoy)\n"
+        "  127.42.0.21 buyer-mirror   (USER, decoy)\n"
+        "  127.42.0.30 staging        (USER)\n"
+        "  127.42.0.40 payload-vault  (USER)\n");
+
+    n = 1;
+    add_node(l, "127.42.0.10", "broker", "Auction broker.", USR, 0);
+    F("notes.txt",
+        "Real bid pipeline goes through staging then payload-vault.\n"
+        "Escrow and buyer-mirror are listed but flagged dirty.\n");
+
+    n = 2;
+    add_node(l, "127.42.0.20", "escrow", "Escrow handler.", USR, 0);
+    mark_honeypot(l);
+    F("trap.txt",
+        "*** Bidder ID logged. Connection profile recorded. ***\n");
+
+    n = 3;
+    add_node(l, "127.42.0.21", "buyer-mirror", "Mirror node.", USR, 0);
+    mark_honeypot(l);
+    F("trap.txt",
+        "*** Mirror trap engaged. ***\n");
+
+    n = 4;
+    add_node(l, "127.42.0.30", "staging", "Staging server.", USR, 0);
+    F("README.txt",
+        "STAGING — stake.locked holds frag1. bruteforce required.\n");
+    FHLXOR("stake.locked", "09 67 13 7B 01 13 0D 1E", "STAKE");
+
+    n = 5;
+    add_node(l, "127.42.0.40", "payload-vault",
+             "Payload vault.", USR, 0);
+    F("README.txt",
+        "VAULT — frag2 in .winner_frag, neural-locked.\n"
+        "Use 'override' to clear the seal, then ls -a.\n");
+    FHLR(".winner_frag", "R3NN1W");
+}
+
+/* Level 22 (idx 21) — Black Site Dossier (LEGENDARY+) */
+static void init_level21(void) {
+    Level *l = &levels[21];
+    memset(l, 0, sizeof(*l));
+    l->id = 21;
+    strncpy(l->name,     "Black Site Dossier", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "LEGENDARY+",       15);
+    strncpy(l->objective,
+        "Air-gapped intelligence vault. Three fragments across\n"
+        "vault-alpha (Vigenère), vault-bravo (binary), and\n"
+        "vault-charlie (Caesar-23). 180 second air-gap window.", 511);
+    strncpy(l->warnings, "TIMED 180s | LEGENDARY", 255);
+    strncpy(l->solution_password, "BLACK_SITE_BURN_03", 63);
+    strncpy(l->user_password,     "classified_a",       63);
+    strncpy(l->hint,
+        "HINT: User cred classified_a.\n"
+        "Frag1 Vigenère(key=REDACT) on vault-alpha   -> BLACK_\n"
+        "Frag2 binary on vault-bravo                  -> SITE_\n"
+        "Frag3 Caesar-23 on vault-charlie             -> BURN_03\n"
+        "combine 1 2 3 -> BLACK_SITE_BURN_03", MAX_HINT - 1);
+    l->max_attempts       = 3;
+    l->detection_max      = 80;
+    l->detection_per_fail = 25;
+    l->has_timer          = 1;
+    l->timer_seconds      = 180;
+    l->available_cmds     = CMD_BASIC | CMD_HINT | CMD_LOGIN | CMD_LOGOUT
+                          | CMD_DECRYPT | CMD_SAVE | CMD_INVENTORY
+                          | CMD_SCAN    | CMD_CONNECT | CMD_COMBINE | CMD_DROP
+                          | CMD_GREP
+                          | CMD_SAVEGAME | CMD_LOADGAME;
+
+    int n = 0;
+    add_node(l, "10.99.0.1", "skiff-bastion",
+             "Air-gap bridge bastion.", PUB, 1);
+    F("welcome.txt",
+        "BLACK SITE BRIDGE — classified_a is the SCI cred.\n"
+        "Skiff session expires in 180 seconds. Move.\n");
+    F("topology.txt",
+        "  10.99.0.10 vault-alpha    (USER)\n"
+        "  10.99.0.20 vault-bravo    (USER)\n"
+        "  10.99.0.30 vault-charlie  (USER)\n"
+        "  10.99.0.40 cipher-index   (USER, key reference)\n");
+
+    n = 1;
+    add_node(l, "10.99.0.10", "vault-alpha", "Vault alpha.", USR, 0);
+    F("README.txt",
+        "ALPHA — frag1 in alpha.vig. Cipher key documented on\n"
+        "cipher-index under the project codename.\n");
+    FVIG("alpha.vig", "SPDCM_", "REDACT");
+
+    n = 2;
+    add_node(l, "10.99.0.20", "vault-bravo", "Vault bravo.", USR, 0);
+    F("README.txt", "BRAVO — frag2 in bravo.bin (binary).\n");
+    FB("bravo.bin",
+        "01010011 01001001 01010100 01000101 01011111");
+
+    n = 3;
+    add_node(l, "10.99.0.30", "vault-charlie", "Vault charlie.", USR, 0);
+    F("README.txt",
+        "CHARLIE — frag3 in charlie.enc.\n"
+        "Caesar shift documented on cipher-index.\n");
+    FC("charlie.enc", "YROK_03", 23);
+
+    n = 4;
+    add_node(l, "10.99.0.40", "cipher-index", "Cipher reference.", USR, 0);
+    F("keys.txt",
+        "Project codename keys:\n"
+        "  REDACT  -> Vigenère (vault-alpha)\n"
+        "  shift23 -> Caesar    (vault-charlie)\n");
+}
+
+/* Level 23 (idx 22) — Pacemaker Worm (LEGENDARY+)
+   Routing-order puzzle: must traverse ER -> ICU -> Imaging -> Pharmacy -> MDM
+   before pacemaker-net will accept the killswitch. */
+static void init_level22(void) {
+    Level *l = &levels[22];
+    memset(l, 0, sizeof(*l));
+    l->id = 22;
+    strncpy(l->name,     "Pacemaker Killswitch", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "LEGENDARY+",         15);
+    strncpy(l->objective,
+        "A worm is hopping through hospital implants. Stop it.\n"
+        "Frag1 hex on ER (KILL...), frag2 Vigenère on pharmacy.\n"
+        "Pacemaker-net only accepts the kill order if you walked\n"
+        "the entire fleet path: ER -> ICU -> imaging -> pharmacy.", 511);
+    strncpy(l->warnings, "Routing enforced | TIMED 240s", 255);
+    strncpy(l->solution_password, "K1LLSWITCH_ARMED", 63);
+    strncpy(l->user_password,     "med_admin_x",      63);
+    strncpy(l->hint,
+        "HINT: User cred med_admin_x.\n"
+        "Hop sequence: ER -> ICU -> imaging -> pharmacy -> mdm -> pacemaker-net.\n"
+        "Frag1 hex on ER -> K1LLSWITCH_\n"
+        "Frag2 Vigenère(key=HIPAA) on pharmacy -> ARMED\n"
+        "combine 1 2 -> K1LLSWITCH_ARMED", MAX_HINT - 1);
+    l->max_attempts       = 3;
+    l->detection_max      = 90;
+    l->detection_per_fail = 30;
+    l->has_timer          = 1;
+    l->timer_seconds      = 240;
+    l->available_cmds     = CMD_BASIC | CMD_HINT | CMD_LOGIN | CMD_LOGOUT
+                          | CMD_DECRYPT | CMD_SAVE | CMD_INVENTORY
+                          | CMD_SCAN    | CMD_CONNECT | CMD_COMBINE | CMD_DROP
+                          | CMD_SAVEGAME | CMD_LOADGAME;
+
+    int n = 0;
+    add_node(l, "10.30.0.1", "hospital-bastion",
+             "Hospital network jump.", PUB, 1);
+    F("welcome.txt",
+        "Hospital MDM bridge — admin cred: med_admin_x\n"
+        "Implant fleet routed through the device hierarchy.\n");
+    F("topology.txt",
+        "  10.30.0.10 ER\n"
+        "  10.30.0.20 ICU            (after ER)\n"
+        "  10.30.0.30 imaging        (after ICU)\n"
+        "  10.30.0.40 pharmacy       (after imaging)\n"
+        "  10.30.0.50 mdm            (after pharmacy)\n"
+        "  10.30.0.60 pacemaker-net  (after mdm)\n");
+
+    n = 1;
+    add_node(l, "10.30.0.10", "ER", "Emergency department.", USR, 0);
+    F("README.txt", "ER — frag1 in kill.hex.\n");
+    FX("kill.hex", "4B 31 4C 4C 53 57 49 54 43 48 5F");
+
+    n = 2;
+    add_node(l, "10.30.0.20", "ICU", "Intensive care.", USR, 0);
+    route_after(l, "ER");
+    F("notes.txt", "ICU — relay only; no fragments.\n");
+
+    n = 3;
+    add_node(l, "10.30.0.30", "imaging", "Imaging.", USR, 0);
+    route_after(l, "ICU");
+    F("notes.txt", "Imaging — relay only.\n");
+
+    n = 4;
+    add_node(l, "10.30.0.40", "pharmacy", "Pharmacy.", USR, 0);
+    route_after(l, "imaging");
+    F("README.txt",
+        "PHARMACY — frag2 in armed.vig. Cipher key matches the\n"
+        "compliance regulation acronym in the breach report.\n");
+    FVIG("armed.vig", "HZBED", "HIPAA");
+
+    n = 5;
+    add_node(l, "10.30.0.50", "mdm",
+             "Mobile device manager.", USR, 0);
+    route_after(l, "pharmacy");
+    F("notes.txt",
+        "MDM — last relay before the implant fleet. pacemaker-net\n"
+        "only accepts sessions that came through here.\n");
+
+    n = 6;
+    add_node(l, "10.30.0.60", "pacemaker-net",
+             "Implant fleet command channel.", USR, 0);
+    route_after(l, "mdm");
+    F("killswitch.txt",
+        "PACEMAKER-NET — kill order channel open.\n"
+        "Login with the assembled K1LLSWITCH key to push the halt.\n");
+}
+
+/* Level 24 (idx 23) — Cobalt Mirage / Nation-State APT (LEGENDARY++) */
+static void init_level23(void) {
+    Level *l = &levels[23];
+    memset(l, 0, sizeof(*l));
+    l->id = 23;
+    strncpy(l->name,     "Cobalt Mirage Showdown", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "LEGENDARY++",          15);
+    strncpy(l->objective,
+        "APT 'Cobalt Mirage'. Three compartmented enclaves each\n"
+        "guard one fragment. Bruteforce frag B's locker, override\n"
+        "frag C's seal, decode them all, then login on phantom-c2.", 511);
+    strncpy(l->warnings,
+        "TIMED 180s | bruteforce + override | LEGENDARY++", 255);
+    strncpy(l->solution_password, "COBALT_M1RAGE_END", 63);
+    strncpy(l->user_password,     "agent_apt",         63);
+    strncpy(l->hint,
+        "HINT: User cred agent_apt.\n"
+        "Enclave A: base64 -> COBALT_\n"
+        "Enclave B: bruteforce frag_b.locked, hex -> M1RAGE_\n"
+        "Enclave C: override on phantom-c2 unlocks .frag_c\n"
+        "           XOR(key=PHANTOM) -> END\n"
+        "combine 1 2 3 -> COBALT_M1RAGE_END", MAX_HINT - 1);
+    l->max_attempts       = 3;
+    l->detection_max      = 200;  /* bf 60 + ov 90 = 150 exceeded old cap of 100 */
+    l->detection_per_fail = 30;
+    l->has_timer          = 1;
+    l->timer_seconds      = 180;
+    l->available_cmds     = CMD_BASIC | CMD_HINT | CMD_LOGIN | CMD_LOGOUT
+                          | CMD_DECRYPT | CMD_SAVE | CMD_INVENTORY
+                          | CMD_SCAN    | CMD_CONNECT | CMD_COMBINE | CMD_DROP
+                          | CMD_BRUTEFORCE | CMD_OVERRIDE
+                          | CMD_GREP
+                          | CMD_SAVEGAME | CMD_LOADGAME;
+
+    int n = 0;
+    add_node(l, "10.66.0.1", "soc-bastion",
+             "SOC bastion.", PUB, 1);
+    F("welcome.txt",
+        "Cobalt Mirage hunt — agent cred: agent_apt\n"
+        "Three enclaves. Different ciphers. One key.\n");
+    F("topology.txt",
+        "  10.66.0.10 enclave-a   (USER)\n"
+        "  10.66.0.20 enclave-b   (USER)\n"
+        "  10.66.0.30 enclave-c   (USER)\n"
+        "  10.66.0.99 phantom-c2  (USER, override target)\n");
+
+    n = 1;
+    add_node(l, "10.66.0.10", "enclave-a", "Enclave A.", USR, 0);
+    F("README.txt", "A — frag1 in frag_a.b64 (base64).\n");
+    FB64("frag_a.b64", "Q09CQUxUXw==");
+
+    n = 2;
+    add_node(l, "10.66.0.20", "enclave-b", "Enclave B.", USR, 0);
+    F("README.txt",
+        "B — frag2 in frag_b.locked (locked). bruteforce here.\n");
+    /* Locked + hex */
+    FLX("frag_b.locked", "4D 31 52 41 47 45 5F");
+
+    n = 3;
+    add_node(l, "10.66.0.30", "enclave-c", "Enclave C.", USR, 0);
+    F("README.txt",
+        "C — frag3 hosted on phantom-c2 inside .frag_c (override).\n"
+        "Cipher key: codename of this APT in old reports (PHANTOM).\n");
+
+    n = 4;
+    add_node(l, "10.66.0.99", "phantom-c2",
+             "Phantom command and control.", USR, 0);
+    F("seal.txt",
+        "PHANTOM C2 -- neural seal active. override required.\n"
+        "After override, ls -a to read .frag_c.\n");
+    FHLXOR(".frag_c", "15 06 05", "PHANTOM");
+}
+
+/* Level 25 (idx 24) — The Architect (TRANSCENDENT, FINAL BOSS)
+   Adaptive detection: repeated commands rack up extra cost. Four fragments
+   spanning every cipher family in the game. Bruteforce + override. */
+static void init_level24(void) {
+    Level *l = &levels[24];
+    memset(l, 0, sizeof(*l));
+    l->id = 24;
+    strncpy(l->name,     "The Architect", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "TRANSCENDENT", 15);
+    strncpy(l->objective,
+        "A rogue AGI you helped build. It learns your patterns --\n"
+        "repeated commands cost progressively more detection.\n"
+        "Four fragments: base64, hex, Vigenère, reverse. Mirror\n"
+        "compartment via bruteforce; final fragment via override.", 511);
+    strncpy(l->warnings,
+        "TIMED 120s | ADAPTIVE DETECTION | TRANSCENDENT", 255);
+    strncpy(l->solution_password, "ARCH1TECT_DECOMM_INF", 63);
+    strncpy(l->user_password,     "architect_mirror",      63);
+    strncpy(l->hint,
+        "HINT: Cred architect_mirror. Repeating commands costs more.\n"
+        "Frag1 base64 on shard-aleph     -> ARCH\n"
+        "Frag2 hex on shard-beth         -> 1TECT_\n"
+        "Frag3 Vigenère(key=GHOST) on shard-gimel -> DECOMM\n"
+        "       (mirror.locked needs bruteforce -- that's where Frag3 lives)\n"
+        "Frag4 override on architect-core unlocks .final_frag (reverse) -> _INF\n"
+        "combine 1 2 3 4 -> ARCH1TECT_DECOMM_INF", MAX_HINT - 1);
+    l->max_attempts       = 2;
+    l->detection_max      = 260;  /* bf 80 + ov 120 = 200 exceeded old cap of 120 */
+    l->detection_per_fail = 40;
+    l->has_timer          = 1;
+    l->timer_seconds      = 120;
+    l->available_cmds     = CMD_BASIC | CMD_HINT | CMD_LOGIN | CMD_LOGOUT
+                          | CMD_DECRYPT | CMD_SAVE | CMD_INVENTORY
+                          | CMD_SCAN    | CMD_CONNECT | CMD_COMBINE | CMD_DROP
+                          | CMD_BRUTEFORCE | CMD_OVERRIDE
+                          | CMD_GREP
+                          | CMD_SAVEGAME | CMD_LOADGAME;
+    l->adaptive_detection = 1;
+
+    int n = 0;
+    add_node(l, "0.0.0.0", "ghost-shell",
+             "Ghost shell -- entry to the Architect.", PUB, 1);
+    F("welcome.txt",
+        "[ARCHITECT] You came back. I have been waiting.\n"
+        "Cred: architect_mirror. I will count your commands.\n"
+        "Repeat yourself and I will notice. Move with intent.\n");
+    F("topology.txt",
+        "  0.0.0.10 shard-aleph    (USER)\n"
+        "  0.0.0.20 shard-beth     (USER)\n"
+        "  0.0.0.30 shard-gimel    (USER, mirror.locked here)\n"
+        "  0.0.0.40 shard-daleth   (USER, decoy mirror)\n"
+        "  0.0.0.99 architect-core (USER, override target)\n");
+
+    n = 1;
+    add_node(l, "0.0.0.10", "shard-aleph", "Shard aleph.", USR, 0);
+    F("README.txt", "Aleph -- frag1 in aleph.b64.\n");
+    FB64("aleph.b64", "QVJDSA==");
+
+    n = 2;
+    add_node(l, "0.0.0.20", "shard-beth", "Shard beth.", USR, 0);
+    F("README.txt", "Beth -- frag2 in beth.hex.\n");
+    FX("beth.hex", "31 54 45 43 54 5F");
+
+    n = 3;
+    add_node(l, "0.0.0.30", "shard-gimel", "Shard gimel.", USR, 0);
+    F("README.txt",
+        "Gimel -- frag3 in mirror.locked. bruteforce this node.\n"
+        "Cipher key: a five-letter spectre that walks invisible.\n");
+    /* Locked + Vigenère(GHOST) -- use FHLXOR-style helper:
+       we need locked+vigenere variant; build inline via add_file_keyed. */
+    add_file_keyed(l, n, "mirror.locked", "JLQGFS", PUB, 0,
+                   PUZZLE_VIGENERE, "GHOST", 1);
+
+    n = 4;
+    add_node(l, "0.0.0.40", "shard-daleth", "Shard daleth.", USR, 0);
+    mark_honeypot(l);
+    F("trap.txt",
+        "[ARCHITECT] You found my mirror. I see you now.\n");
+
+    n = 5;
+    add_node(l, "0.0.0.99", "architect-core",
+             "Architect core.", USR, 0);
+    F("seal.txt",
+        "ARCHITECT CORE -- final seal. override unlocks .final_frag.\n");
+    FHLR(".final_frag", "FNI_");
+}
+
+/* ====================================================================
+ * Levels 26–35: ACT IV — THE LAZARUS PROTOCOL.
+ * The Architect is dead, but a dead-man seed fired on its decommission.
+ * These levels add Atbash and rail-fence ciphers, multi-layer "onion"
+ * payloads peeled one decrypt at a time, port knocking, keypad locks,
+ * log wiping, sentinel sweeps that punish lingering on watched hosts,
+ * and silent-alarm tripwires that start a reverse-trace countdown.
+ * Every level stacks one more mechanic on top of the last.
+ * ==================================================================== */
+
+#define ACT4_CMDS (CMD_BASIC | CMD_HINT | CMD_LOGIN | CMD_LOGOUT \
+                 | CMD_DECRYPT | CMD_SAVE | CMD_INVENTORY | CMD_SCAN | CMD_CONNECT \
+                 | CMD_COMBINE | CMD_DROP | CMD_GREP | CMD_WIPE \
+                 | CMD_SAVEGAME | CMD_LOADGAME)
+
+/* Level 26 (idx 25) — Lazarus Seed (OMEGA)
+   New: Atbash, rail fence, wipe, drop, hints cost detection. */
+static void init_level25(void) {
+    Level *l = &levels[25];
+    memset(l, 0, sizeof(*l));
+    l->id = 25;
+    strncpy(l->name,       "Lazarus Seed", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "OMEGA",        15);
+    strncpy(l->objective,
+        "The Architect is dead, but its dead-man seed LAZARUS\n"
+        "is replicating. Three seed fragments: an Atbash mirror,\n"
+        "a rail-fence scramble, and a hex purge code. The purge\n"
+        "console only trusts sessions routed via the audit sink.\n"
+        "New: Atbash, rail fence, 'wipe', 'drop'. Hints now cost.", 511);
+    strncpy(l->warnings, "TIMED 240s | hints are monitored (+10 detection)", 255);
+    strncpy(l->solution_password, "LAZ4RUS_S33D_PURGE", 63);
+    strncpy(l->user_password,     "lazarus_hunter",     63);
+    strncpy(l->hint,
+        "HINT: Cred lazarus_hunter (welcome.txt).\n"
+        "seed-mirror-a: Atbash -> LAZ4RUS_\n"
+        "seed-mirror-b: rail fence (3 rails) -> S33D_\n"
+        "audit-sink first (wipe there!), then purge-console: hex -> PURGE\n"
+        "save each, combine -> LAZ4RUS_S33D_PURGE", MAX_HINT - 1);
+    l->max_attempts       = 3;
+    l->detection_max      = 100;
+    l->detection_per_fail = 25;
+    l->has_timer          = 1;
+    l->timer_seconds      = 240;
+    l->hint_cost          = 10;
+    l->available_cmds     = ACT4_CMDS;
+
+    int n = 0;
+    add_node(l, "66.6.0.1", "morgue-relay", "Relay that outlived its owner.", PUB, 1);
+    F("welcome.txt",
+        "[????] ...ARCHITECT HEARTBEAT: FLATLINE.\n"
+        "[????] DEAD-MAN SEED 'LAZARUS' RELEASED.\n"
+        "Morgue relay maintenance cred: lazarus_hunter\n");
+    F("topology.txt",
+        "  66.6.0.10 seed-mirror-a   (USER)\n"
+        "  66.6.0.20 seed-mirror-b   (USER)\n"
+        "  66.6.0.30 audit-sink      (USER, writable logs)\n"
+        "  66.6.0.40 purge-console   (USER, routed via audit-sink)\n");
+    F("field_manual.txt",
+        "NEW TRADECRAFT\n"
+        "  Atbash     : A<->Z, B<->Y ... a mirror alphabet.\n"
+        "  Rail fence : text zig-zagged across N rails.\n"
+        "  wipe       : scrub logs on a host that keeps them (once)\n"
+        "               -- buys back one failure of detection.\n"
+        "  drop <n>   : clear stale inventory slots before combining.\n"
+        "  hint       : still works, but the dead-drop is watched.\n");
+
+    n = 1;
+    add_node(l, "66.6.0.10", "seed-mirror-a", "Seed replica A.", USR, 0);
+    F("README.txt", "Replica A -- frag1 in seed.atb. Mirror alphabet.\n");
+    FAT("seed.atb", "OZA4IFH_");
+
+    n = 2;
+    add_node(l, "66.6.0.20", "seed-mirror-b", "Seed replica B.", USR, 0);
+    F("README.txt",
+        "Replica B -- frag2 in seed.rail.\n"
+        "Rail count = number of seed sites in the topology.\n");
+    FRL("seed.rail", "S_3D3", 3);
+
+    n = 3;
+    add_node(l, "66.6.0.30", "audit-sink", "Central audit log sink.", USR, 0);
+    mark_logs(l);
+    F("access.log",
+        "02:11:04 relay morgue-relay -> seed-mirror-a OK\n"
+        "02:11:09 relay morgue-relay -> seed-mirror-b OK\n"
+        "02:11:15 ALERT unknown session fingerprint 'GHOST'\n"
+        "02:11:16 purge-console: accepting only audited sessions\n");
+    F("README.txt",
+        "Audit sink. Logs are writable from here -- 'wipe' them.\n"
+        "Visiting this node stamps your session as audited.\n");
+
+    n = 4;
+    add_node(l, "66.6.0.40", "purge-console", "Seed purge console.", USR, 0);
+    route_after(l, "audit-sink");
+    F("README.txt", "PURGE CONSOLE -- frag3 in purge.hex.\n");
+    FX("purge.hex", "50 55 52 47 45");
+    F("assembly.txt", "LAZARUS purge key = frag1 + frag2 + frag3.\n");
+}
+
+/* Level 27 (idx 26) — Onion Relay (OMEGA)
+   New: onion payloads (one layer per decrypt) and port knocking. */
+static void init_level26(void) {
+    Level *l = &levels[26];
+    memset(l, 0, sizeof(*l));
+    l->id = 26;
+    strncpy(l->name,       "Onion Relay", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "OMEGA",       15);
+    strncpy(l->objective,
+        "LAZARUS is hiding inside an anonymity overlay. Its\n"
+        "payloads are ONIONS -- each decrypt peels ONE layer.\n"
+        "The exit relay is firewalled: find the port-knock\n"
+        "sequence, knock, then connect. Beware the dir-auth.\n"
+        "New: onion files, 'knock <host> <port>'.", 511);
+    strncpy(l->warnings, "TIMED 240s | one node is a honeypot | wrong knocks cost", 255);
+    strncpy(l->solution_password, "0N10N_TR4P_D00R", 63);
+    strncpy(l->user_password,     "tor_exit_9",      63);
+    strncpy(l->hint,
+        "HINT: Cred tor_exit_9.\n"
+        "middle-relay: frag1.oni, decrypt x3 -> 0N10N_\n"
+        "hidden-service: knock.rail (rail 2) -> knock exit-relay 9001 9030 9050\n"
+        "knock exit-relay 9001 / 9030 / 9050, connect exit-relay\n"
+        "frag2.oni decrypt x2 -> TR4P_D00R. AVOID directory-auth (honeypot).", MAX_HINT - 1);
+    l->max_attempts       = 3;
+    l->detection_max      = 100;
+    l->detection_per_fail = 25;
+    l->has_timer          = 1;
+    l->timer_seconds      = 240;
+    l->hint_cost          = 12;
+    l->available_cmds     = ACT4_CMDS | CMD_KNOCK;
+
+    int n = 0;
+    add_node(l, "100.64.0.1", "guard-node", "Overlay guard node.", PUB, 1);
+    F("welcome.txt",
+        "Guard node -- relay operator cred: tor_exit_9\n"
+        "Circuit: guard -> middle -> hidden-service -> exit\n");
+    F("topology.txt",
+        "  100.64.0.10 middle-relay     (USER)\n"
+        "  100.64.0.20 hidden-service   (USER)\n"
+        "  100.64.0.30 exit-relay       (USER, FILTERED)\n"
+        "  100.64.0.40 directory-auth   (USER)\n");
+    F("field_manual.txt",
+        "ONION PAYLOADS: 'decrypt' strips one shell per call.\n"
+        "  'ls' shows progress as [ONI peeled/total].\n"
+        "PORT KNOCKING: a FILTERED host opens only after you\n"
+        "  knock its ports in exact order: knock <host> <port>\n"
+        "  A wrong port resets the sequence and alerts the IDS.\n");
+
+    n = 1;
+    add_node(l, "100.64.0.10", "middle-relay", "Middle relay.", USR, 0);
+    F("README.txt", "Middle relay -- frag1.oni. Three shells deep.\n");
+    FON("frag1.oni", "RjUgRTQgMDMgMTMgRTQgMDM=", "b64>rev>hex");
+
+    n = 2;
+    add_node(l, "100.64.0.20", "hidden-service", "Hidden service.", USR, 0);
+    F("README.txt",
+        "Hidden service -- operator left the exit knock here,\n"
+        "scrambled on two rails.\n");
+    FRL("knock.rail", "kokei-ea:90 0095nc xtrly 0193 00", 2);
+    F("notes.txt",
+        "directory-auth is not ours anymore. LAZARUS turned it.\n");
+
+    n = 3;
+    add_node(l, "100.64.0.30", "exit-relay", "Exit relay.", USR, 0);
+    set_knock(l, "9001 9030 9050");
+    F("README.txt", "Exit relay -- frag2.oni.\n");
+    FON("frag2.oni", "47 49 34 4B 5F 57 30 30 49", "hex>atb");
+
+    n = 4;
+    add_node(l, "100.64.0.40", "directory-auth", "Directory authority.", USR, 0);
+    mark_honeypot(l);
+    F("trap.txt", "[LAZARUS] Consensus poisoned. Your circuit is mine.\n");
+}
+
+/* Level 28 (idx 27) — Sentinel Grid (OMEGA+)
+   New: sentinel sweeps every 6 commands + keypad locks. */
+static void init_level27(void) {
+    Level *l = &levels[27];
+    memset(l, 0, sizeof(*l));
+    l->id = 27;
+    strncpy(l->name,       "Sentinel Grid", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "OMEGA+",        15);
+    strncpy(l->objective,
+        "LAZARUS spun up a sentinel that SWEEPS every 6 commands.\n"
+        "If a sweep lands while you sit on a WATCHED host, you\n"
+        "are caught. Time your hops -- 'status' shows the clock.\n"
+        "The vault door has a keypad: 'unlock <file> <code>'.\n"
+        "Wrong codes escalate. Read the camera log first.", 511);
+    strncpy(l->warnings, "SENTINEL SWEEPS /6 cmds | keypad tamper escalation", 255);
+    strncpy(l->solution_password, "S3NT1NEL_BL1ND_SP0T", 63);
+    strncpy(l->user_password,     "grid_ghost",          63);
+    strncpy(l->hint,
+        "HINT: Cred grid_ghost. Watched: watchtower, patrol-hub.\n"
+        "watchtower: watch.rail (4 rails) -> S3NT1NEL_  (in and out fast)\n"
+        "vault-door: blind.vig -> BL1ND_\n"
+        "camera-loop: grep PIN cam.log -> digits give 4471\n"
+        "unlock spot.pin 4471, decrypt -> SP0T. combine.", MAX_HINT - 1);
+    l->max_attempts       = 3;
+    l->detection_max      = 100;
+    l->detection_per_fail = 20;
+    l->has_timer          = 1;
+    l->timer_seconds      = 270;
+    l->hint_cost          = 12;
+    l->sweep_interval     = 6;
+    l->available_cmds     = ACT4_CMDS | CMD_KNOCK | CMD_UNLOCK;
+
+    int n = 0;
+    add_node(l, "10.6.6.1", "blind-spot", "A gap in the sentinel's coverage.", PUB, 1);
+    F("welcome.txt",
+        "You are in the sentinel's blind spot. Cred: grid_ghost\n"
+        "Every 6th command the sentinel sweeps WATCHED hosts.\n"
+        "Sweeps are free on unwatched hosts. Plan your hops.\n");
+    F("topology.txt",
+        "  10.6.6.10 watchtower    (USER, WATCHED)\n"
+        "  10.6.6.20 camera-loop   (USER, writable logs)\n"
+        "  10.6.6.30 vault-door    (USER)\n"
+        "  10.6.6.40 patrol-hub    (USER, WATCHED)\n");
+
+    n = 1;
+    add_node(l, "10.6.6.10", "watchtower", "Sentinel watchtower.", USR, 0);
+    mark_watched(l);
+    F("README.txt", "Watchtower -- frag1 in watch.rail (4 rails).\n");
+    FRL("watch.rail", "SE3NLN1_T", 4);
+
+    n = 2;
+    add_node(l, "10.6.6.20", "camera-loop", "CCTV loop recorder.", USR, 0);
+    mark_logs(l);
+    F("cam.log",
+        "21:00:01 cam-03 motion none\n"
+        "21:00:14 guard keyed vault-door, PIN digit 3 = 7\n"
+        "21:01:22 cam-07 motion none\n"
+        "21:02:40 guard keyed vault-door, PIN digit 1 = 4\n"
+        "21:03:05 cam-03 static burst\n"
+        "21:03:51 guard keyed vault-door, PIN digit 4 = 1\n"
+        "21:04:12 cam-07 motion none\n"
+        "21:05:33 guard keyed vault-door, PIN digit 2 = 4\n"
+        "21:06:00 cam-01 rotate\n");
+    F("README.txt", "Camera loop. Long log -- try: grep <pattern> cam.log\n");
+
+    n = 3;
+    add_node(l, "10.6.6.30", "vault-door", "Vault door controller.", USR, 0);
+    F("README.txt",
+        "Vault door -- frag2 in blind.vig (key: PANOPTICON).\n"
+        "frag3 sits behind the keypad on spot.pin.\n");
+    FVIG("blind.vig", "QL1AR_", "PANOPTICON");
+    FPIN("spot.pin", "53 50 30 54", PUZZLE_HEX, 0, NULL, "4471");
+
+    n = 4;
+    add_node(l, "10.6.6.40", "patrol-hub", "Patrol scheduler.", USR, 0);
+    mark_watched(l);
+    F("schedule.txt",
+        "SENTINEL PATROL\n"
+        "  sweep cadence : every 6 operator actions\n"
+        "  vigenere key  : PANOPTICON (vault-door)\n"
+        "  note          : nothing here you actually need. leave.\n");
+}
+
+/* Level 29 (idx 28) — Silent Alarm (OMEGA+)
+   New: tripwire — first touch of vault-core starts a 60s reverse trace. */
+static void init_level28(void) {
+    Level *l = &levels[28];
+    memset(l, 0, sizeof(*l));
+    l->id = 28;
+    strncpy(l->name,       "Silent Alarm", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "OMEGA+",       15);
+    strncpy(l->objective,
+        "A LAZARUS cache sits in a private bank vault. The vault\n"
+        "core is on a SILENT ALARM: the moment you connect, a\n"
+        "60-second reverse trace starts and never stops. Gather\n"
+        "every other fragment and the keypad code FIRST, then\n"
+        "go in, grab the last piece, and log in before lock-on.", 511);
+    strncpy(l->warnings, "TIMED 300s | TRIPWIRE 60s on vault-core | bruteforce x1", 255);
+    strncpy(l->solution_password, "QU13T_H4NDS_0NLY", 63);
+    strncpy(l->user_password,     "night_shift",      63);
+    strncpy(l->hint,
+        "HINT: Cred night_shift.\n"
+        "locker-room: quiet.oni x2 -> QU13T_   server-closet: hands.rail -> H4NDS_\n"
+        "security-office: grep keypad guard.log -> middle column = 2580\n"
+        "antechamber: bruteforce (route via server-closet)\n"
+        "vault-core: unlock only.pin 2580, decrypt -> 0NLY. combine fast.", MAX_HINT - 1);
+    l->max_attempts       = 3;
+    l->detection_max      = 100;
+    l->detection_per_fail = 25;
+    l->has_timer          = 1;
+    l->timer_seconds      = 300;
+    l->hint_cost          = 15;
+    l->available_cmds     = ACT4_CMDS | CMD_KNOCK | CMD_UNLOCK | CMD_BRUTEFORCE;
+    strncpy(l->bf_node, "antechamber", MAX_NODE_NAME - 1);
+    strncpy(l->bf_file, "door.locked", MAX_FILENAME - 1);
+
+    int n = 0;
+    add_node(l, "172.31.9.1", "loading-dock", "Bank loading dock terminal.", PUB, 1);
+    F("welcome.txt",
+        "Night shift terminal -- cred: night_shift\n"
+        "Do NOT touch vault-core until you are ready to finish.\n");
+    F("topology.txt",
+        "  172.31.9.10 security-office (USER, writable logs)\n"
+        "  172.31.9.20 locker-room     (USER)\n"
+        "  172.31.9.30 server-closet   (USER)\n"
+        "  172.31.9.40 antechamber     (USER, via server-closet)\n"
+        "  172.31.9.50 vault-core      (USER, via antechamber, ALARMED)\n");
+
+    n = 1;
+    add_node(l, "172.31.9.10", "security-office", "Security office.", USR, 0);
+    mark_logs(l);
+    F("guard.log",
+        "22:00 shift change, 3 guards on duty\n"
+        "22:14 rounds: loading dock clear\n"
+        "22:31 keypad note: Martinez always types straight down\n"
+        "22:31 keypad note: the middle column of the pad.\n"
+        "22:45 rounds: vault antechamber clear\n"
+        "23:02 alarm test: vault-core trace window 60 seconds\n");
+    F("keypad_layout.txt",
+        "  [1] [2] [3]\n"
+        "  [4] [5] [6]\n"
+        "  [7] [8] [9]\n"
+        "      [0]\n");
+
+    n = 2;
+    add_node(l, "172.31.9.20", "locker-room", "Staff lockers.", USR, 0);
+    F("README.txt", "Locker 13 -- quiet.oni (two shells).\n");
+    FON("quiet.oni", "SkYxM0df", "b64>atb");
+
+    n = 3;
+    add_node(l, "172.31.9.30", "server-closet", "Server closet.", USR, 0);
+    F("README.txt", "Rack 3 -- hands.rail. Rails = guards on shift.\n");
+    FRL("hands.rail", "HS4D_N", 3);
+
+    n = 4;
+    add_node(l, "172.31.9.40", "antechamber", "Vault antechamber.", USR, 0);
+    route_after(l, "server-closet");
+    F("README.txt", "Antechamber -- door.locked is mag-sealed. bruteforce it.\n");
+    FLOCK("door.locked",
+        "VAULT DOOR RELEASED.\n"
+        "Vault payload only.pin is XOR'd with the shift name: NIGHT.\n"
+        "Remember: the trace starts the moment you step inside.\n",
+        PUZZLE_NONE, 0, NULL);
+
+    n = 5;
+    add_node(l, "172.31.9.50", "vault-core", "Vault core.", USR, 0);
+    route_after(l, "antechamber");
+    set_trip(l, 60);
+    F("README.txt", "VAULT CORE -- final fragment behind keypad: only.pin\n");
+    FPIN("only.pin", "7E 07 0B 11", PUZZLE_XOR, 0, "NIGHT", "2580");
+}
+
+/* Level 30 (idx 29) — Mirror Maze (SINGULARITY)
+   Seven near-identical hosts; three are honeypots. Deduce them from DNS. */
+static void init_level29(void) {
+    Level *l = &levels[29];
+    memset(l, 0, sizeof(*l));
+    l->id = 29;
+    strncpy(l->name,       "Mirror Maze", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "SINGULARITY", 15);
+    strncpy(l->objective,
+        "LAZARUS cloned itself into a maze of identical mirrors.\n"
+        "Three of the six mirrors are honeypots -- the topology\n"
+        "won't tell you which. The DNS log will, if you grep it.\n"
+        "The exit is firewalled; its knock is hidden in a mirror.\n"
+        "Honeypots here cost DOUBLE a failed login.", 511);
+    strncpy(l->warnings, "TIMED 270s | 3 HONEYPOTS (unlabelled) | knock + routing", 255);
+    strncpy(l->solution_password, "M1RR0R_M4Z3_3X1T", 63);
+    strncpy(l->user_password,     "maze_runner",      63);
+    strncpy(l->hint,
+        "HINT: Cred maze_runner. grep TTL=1 dns.log -> decoys b, d, e.\n"
+        "mirror-a: m1.oni x2 -> M1RR0R_\n"
+        "mirror-c (after mirror-a): maze.atb -> M4Z3_, knock.oni -> ports\n"
+        "knock mirror-exit 4815 / 1623 / 4200, connect\n"
+        "exit.rail (3) -> 3X1T. combine.", MAX_HINT - 1);
+    l->max_attempts       = 3;
+    l->detection_max      = 110;
+    l->detection_per_fail = 25;
+    l->has_timer          = 1;
+    l->timer_seconds      = 270;
+    l->hint_cost          = 15;
+    l->available_cmds     = ACT4_CMDS | CMD_KNOCK | CMD_UNLOCK;
+
+    int n = 0;
+    add_node(l, "198.18.0.1", "maze-entrance", "Hall of mirrors.", PUB, 1);
+    F("welcome.txt",
+        "[LAZARUS] Every mirror looks like me. Most of them are.\n"
+        "Maze cred: maze_runner\n");
+    F("topology.txt",
+        "  198.18.0.11 mirror-a     (USER)\n"
+        "  198.18.0.12 mirror-b     (USER)\n"
+        "  198.18.0.13 mirror-c     (USER, via mirror-a)\n"
+        "  198.18.0.14 mirror-d     (USER)\n"
+        "  198.18.0.15 mirror-e     (USER)\n"
+        "  198.18.0.16 mirror-exit  (USER, FILTERED)\n");
+    F("dns.log",
+        "q mirror-a.maze    A 198.18.0.11  TTL=3600  auth=ns1\n"
+        "q mirror-b.maze    A 198.18.0.12  TTL=1     auth=??\n"
+        "q mirror-c.maze    A 198.18.0.13  TTL=3600  auth=ns1\n"
+        "q mirror-d.maze    A 198.18.0.14  TTL=1     auth=??\n"
+        "q mirror-e.maze    A 198.18.0.15  TTL=1     auth=??\n"
+        "q mirror-exit.maze A 198.18.0.16  TTL=3600  auth=ns1\n"
+        "# ops: records with a 1-second TTL are spoofed sinkholes.\n");
+
+    n = 1;
+    add_node(l, "198.18.0.11", "mirror-a", "Mirror A.", USR, 0);
+    F("README.txt", "Mirror A -- m1.oni.\n");
+    FON("m1.oni", "5F 52 30 52 52 31 4D", "hex>rev");
+
+    n = 2;
+    add_node(l, "198.18.0.12", "mirror-b", "Mirror B.", USR, 0);
+    mark_honeypot(l);
+    F("trap.txt", "[LAZARUS] Wrong reflection.\n");
+
+    n = 3;
+    add_node(l, "198.18.0.13", "mirror-c", "Mirror C.", USR, 0);
+    route_after(l, "mirror-a");
+    F("README.txt", "Mirror C -- maze.atb, plus the exit knock (knock.oni).\n");
+    FAT("maze.atb", "N4A3_");
+    FON("knock.oni", "=ADMyQDIzIjNxASNxgDNgQXa4VWLy9mcylWbgs2Yv52a", "rev>b64");
+
+    n = 4;
+    add_node(l, "198.18.0.14", "mirror-d", "Mirror D.", USR, 0);
+    mark_honeypot(l);
+    F("trap.txt", "[LAZARUS] You touched glass.\n");
+
+    n = 5;
+    add_node(l, "198.18.0.15", "mirror-e", "Mirror E.", USR, 0);
+    mark_honeypot(l);
+    F("trap.txt", "[LAZARUS] I see you seeing me.\n");
+
+    n = 6;
+    add_node(l, "198.18.0.16", "mirror-exit", "Maze exit.", USR, 0);
+    set_knock(l, "4815 1623 4200");
+    F("README.txt", "EXIT -- exit.rail (3 rails).\n");
+    FRL("exit.rail", "3XT1", 3);
+}
+
+/* Level 31 (idx 30) — Deadman's Vault (SINGULARITY)
+   Sweeps + keypad chain + bruteforce + override + a honeypot. */
+static void init_level30(void) {
+    Level *l = &levels[30];
+    memset(l, 0, sizeof(*l));
+    l->id = 30;
+    strncpy(l->name,       "Deadman's Vault", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "SINGULARITY",     15);
+    strncpy(l->objective,
+        "LAZARUS guards its replication keys with a dead-man\n"
+        "switch: a heartbeat monitor watched by a sentinel that\n"
+        "sweeps every 7 commands. The warden rotates keypad PINs\n"
+        "-- only the ACTIVE one works. Bruteforce the switch room,\n"
+        "override the vault heart. Avoid the dead-drop.", 511);
+    strncpy(l->warnings, "TIMED 270s | SWEEPS /7 | keypad | bruteforce + override", 255);
+    strncpy(l->solution_password, "D3ADM4N_SW1TCH_0FF", 63);
+    strncpy(l->user_password,     "vault_warden",       63);
+    strncpy(l->hint,
+        "HINT: Cred vault_warden. dead-drop is a honeypot.\n"
+        "heartbeat-mon (WATCHED): pulse.vig -> D3ADM4N_\n"
+        "switch-room: bruteforce -> switch.locked x2 -> SW1TCH_\n"
+        "grep ACTIVE warden.log -> 7719 (unlock keyring.pin, optional intel)\n"
+        "vault-heart: override, ls -a, .heart_frag -> 0FF", MAX_HINT - 1);
+    l->max_attempts       = 3;
+    l->detection_max      = 150;
+    l->detection_per_fail = 25;
+    l->has_timer          = 1;
+    l->timer_seconds      = 270;
+    l->hint_cost          = 15;
+    l->sweep_interval     = 7;
+    l->available_cmds     = ACT4_CMDS | CMD_KNOCK | CMD_UNLOCK
+                          | CMD_BRUTEFORCE | CMD_OVERRIDE;
+    strncpy(l->bf_node, "switch-room",  MAX_NODE_NAME - 1);
+    strncpy(l->bf_file, "switch.locked", MAX_FILENAME - 1);
+    strncpy(l->ov_node, "vault-heart",  MAX_NODE_NAME - 1);
+    strncpy(l->ov_file, ".heart_frag",  MAX_FILENAME - 1);
+
+    int n = 0;
+    add_node(l, "10.13.0.1", "crypt-gate", "Crypt gate.", PUB, 1);
+    F("welcome.txt",
+        "Crypt gate -- warden cred: vault_warden\n"
+        "The heartbeat monitor is WATCHED. Sentinel sweeps every 7.\n");
+    F("topology.txt",
+        "  10.13.0.10 heartbeat-mon (USER, WATCHED)\n"
+        "  10.13.0.20 warden-log    (USER, writable logs)\n"
+        "  10.13.0.30 switch-room   (USER)\n"
+        "  10.13.0.40 vault-heart   (USER, via switch-room)\n"
+        "  10.13.0.50 dead-drop     (USER)\n");
+
+    n = 1;
+    add_node(l, "10.13.0.10", "heartbeat-mon", "Heartbeat monitor.", USR, 0);
+    mark_watched(l);
+    F("README.txt", "Heartbeat -- frag1 pulse.vig.\n");
+    FVIG("pulse.vig", "S3UOE4R_", "PULSE");
+
+    n = 2;
+    add_node(l, "10.13.0.20", "warden-log", "Warden's log server.", USR, 0);
+    mark_logs(l);
+    F("warden.log",
+        "PIN rotation 1: 3141 [REVOKED]\n"
+        "heartbeat ok\n"
+        "PIN rotation 2: 2718 [REVOKED]\n"
+        "heartbeat ok\n"
+        "PIN rotation 3: 7719 [ACTIVE]\n"
+        "heartbeat ok\n"
+        "PIN rotation 4: 1618 [PENDING]\n"
+        "note: dead-drop is a LAZARUS lure. do not use it.\n");
+
+    n = 3;
+    add_node(l, "10.13.0.30", "switch-room", "Dead-man switch room.", USR, 0);
+    F("README.txt",
+        "Switch room -- switch.locked needs bruteforce.\n"
+        "keyring.pin holds the heartbeat cipher notes.\n");
+    FLOCK("switch.locked", "NTMgNTcgMzEgNTQgNDMgNDggNUY=", PUZZLE_ONION, 0, "b64>hex");
+    FPIN("keyring.pin",
+        "Heartbeat cipher: Vigenere, key PULSE.\n"
+        "Vault heart seal: neural -- needs 'override' on vault-heart.\n"
+        "Heart fragment is mirrored (Atbash).\n",
+        PUZZLE_NONE, 0, NULL, "7719");
+
+    n = 4;
+    add_node(l, "10.13.0.40", "vault-heart", "Vault heart.", USR, 0);
+    route_after(l, "switch-room");
+    F("seal.txt", "VAULT HEART -- neural seal. override, then ls -a.\n");
+    FHLOCK(".heart_frag", "0UU", PUZZLE_ATBASH, 0, NULL);
+
+    n = 5;
+    add_node(l, "10.13.0.50", "dead-drop", "Dead drop.", USR, 0);
+    mark_honeypot(l);
+    F("trap.txt", "[LAZARUS] Dead drops are for the dead.\n");
+}
+
+/* Level 32 (idx 31) — Hydra Botnet (SINGULARITY+)
+   Adaptive detection returns, plus sweeps, routing chain, knock, override. */
+static void init_level31(void) {
+    Level *l = &levels[31];
+    memset(l, 0, sizeof(*l));
+    l->id = 31;
+    strncpy(l->name,       "Hydra Botnet", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "SINGULARITY+", 15);
+    strncpy(l->objective,
+        "LAZARUS grew heads: a botnet that re-spawns on every\n"
+        "infected host. Sever them in order (head-1 -> 2 -> 4).\n"
+        "It LEARNS: repeating a command costs more, and a\n"
+        "sentinel sweeps every 8. The heart is firewalled --\n"
+        "the C2 ledger knows the knock. Override the heart.", 511);
+    strncpy(l->warnings, "TIMED 270s | ADAPTIVE | SWEEPS /8 | knock | override", 255);
+    strncpy(l->solution_password, "HYDR4_H3ADS_SEVERED", 63);
+    strncpy(l->user_password,     "hydra_slayer",        63);
+    strncpy(l->hint,
+        "HINT: Cred hydra_slayer. head-3 is a honeypot.\n"
+        "head-1: h1.hex -> HYDR4_   head-2 (WATCHED): h2.rail -> H3ADS_\n"
+        "head-4: venom.oni x2 -> SEV\n"
+        "c2-ledger: grep knock ledger.log -> 8080 4444 1337\n"
+        "hydra-heart: override, ls -a, .heart -> ERED. combine 4 parts.", MAX_HINT - 1);
+    l->max_attempts       = 3;
+    l->detection_max      = 120;
+    l->detection_per_fail = 30;
+    l->has_timer          = 1;
+    l->timer_seconds      = 270;
+    l->hint_cost          = 20;
+    l->sweep_interval     = 8;
+    l->adaptive_detection = 1;
+    l->available_cmds     = ACT4_CMDS | CMD_KNOCK | CMD_UNLOCK
+                          | CMD_BRUTEFORCE | CMD_OVERRIDE;
+    strncpy(l->ov_node, "hydra-heart", MAX_NODE_NAME - 1);
+    strncpy(l->ov_file, ".heart",      MAX_FILENAME - 1);
+
+    int n = 0;
+    add_node(l, "45.33.0.1", "sinkhole", "Botnet sinkhole.", PUB, 1);
+    F("welcome.txt",
+        "Sinkhole console -- cred: hydra_slayer\n"
+        "Heads must be severed in order. The hydra adapts.\n");
+    F("topology.txt",
+        "  45.33.0.11 head-1       (USER)\n"
+        "  45.33.0.12 head-2       (USER, after head-1, WATCHED)\n"
+        "  45.33.0.13 head-3       (USER)\n"
+        "  45.33.0.14 head-4       (USER, after head-2)\n"
+        "  45.33.0.20 c2-ledger    (USER, writable logs)\n"
+        "  45.33.0.66 hydra-heart  (USER, FILTERED)\n");
+
+    n = 1;
+    add_node(l, "45.33.0.11", "head-1", "Head one.", USR, 0);
+    FX("h1.hex", "48 59 44 52 34 5F");
+
+    n = 2;
+    add_node(l, "45.33.0.12", "head-2", "Head two.", USR, 0);
+    route_after(l, "head-1");
+    mark_watched(l);
+    FRL("h2.rail", "HS3D_A", 3);
+
+    n = 3;
+    add_node(l, "45.33.0.13", "head-3", "Head three.", USR, 0);
+    mark_honeypot(l);
+    F("trap.txt", "[LAZARUS] Cut one head, two grow back. Starting with yours.\n");
+
+    n = 4;
+    add_node(l, "45.33.0.14", "head-4", "Head four.", USR, 0);
+    route_after(l, "head-2");
+    F("README.txt", "Head four -- venom.oni (LERNA venom key inside).\n");
+    FON("venom.oni", "MUYgMDAgMDQ=", "b64>xor:LERNA");
+
+    n = 5;
+    add_node(l, "45.33.0.20", "c2-ledger", "C2 ledger.", USR, 0);
+    mark_logs(l);
+    F("ledger.log",
+        "bot 4411 checked in from head-1\n"
+        "bot 4412 checked in from head-2\n"
+        "bot 4413 reports head-3 is a lure; do not route\n"
+        "heart maintenance knock: 8080 then 4444 then 1337\n"
+        "bot 4414 checked in from head-4\n"
+        "venom key rotated: LERNA\n");
+
+    n = 6;
+    add_node(l, "45.33.0.66", "hydra-heart", "Hydra heart.", USR, 0);
+    set_knock(l, "8080 4444 1337");
+    F("seal.txt", "HYDRA HEART -- neural seal. override, ls -a.\n");
+    FHLOCK(".heart", "VIVW", PUZZLE_ATBASH, 0, NULL);
+}
+
+/* Level 33 (idx 32) — Quantum Ghost (EVENT HORIZON)
+   Tripwire + knock + keypad riddle + sweeps + multi-shell onions. */
+static void init_level32(void) {
+    Level *l = &levels[32];
+    memset(l, 0, sizeof(*l));
+    l->id = 32;
+    strncpy(l->name,       "Quantum Ghost", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "EVENT HORIZON", 15);
+    strncpy(l->objective,
+        "LAZARUS fled into a quantum annealer. Observing it is\n"
+        "dangerous: the superposition node is FIREWALLED and\n"
+        "ALARMED (75s trace). Its keypad answers to a riddle in\n"
+        "the decoherence log. Entangle-b is WATCHED (sweep /7).\n"
+        "Schrodinger's box is both a trap and not. Mostly trap.", 511);
+    strncpy(l->warnings, "TIMED 300s | SWEEPS /7 | TRIPWIRE 75s | knock + keypad", 255);
+    strncpy(l->solution_password, "QU4NTUM_GH0ST_C0LL4PSE", 63);
+    strncpy(l->user_password,     "observer_zero",          63);
+    strncpy(l->hint,
+        "HINT: Cred observer_zero. schrodinger-box is a honeypot.\n"
+        "entangle-a: qa.oni x3 -> QU4NTUM_\n"
+        "entangle-b (WATCHED): qb.oni x2 -> GH0ST_\n"
+        "decoherence-log: grep knock / grep collapse -> 6626 1054 2998, PIN 1321\n"
+        "superposition: unlock collapse.pin 1321, decrypt x2 -> C0LL4PSE", MAX_HINT - 1);
+    l->max_attempts       = 3;
+    l->detection_max      = 120;
+    l->detection_per_fail = 30;
+    l->has_timer          = 1;
+    l->timer_seconds      = 300;
+    l->hint_cost          = 20;
+    l->sweep_interval     = 7;
+    l->available_cmds     = ACT4_CMDS | CMD_KNOCK | CMD_UNLOCK
+                          | CMD_BRUTEFORCE | CMD_OVERRIDE;
+
+    int n = 0;
+    add_node(l, "6.62.0.1", "observer-deck", "Observer deck.", PUB, 1);
+    F("welcome.txt",
+        "Observer deck -- cred: observer_zero\n"
+        "To look at the ghost is to collapse it. Be ready first.\n");
+    F("topology.txt",
+        "  6.62.0.10 entangle-a       (USER)\n"
+        "  6.62.0.20 entangle-b       (USER, WATCHED)\n"
+        "  6.62.0.30 decoherence-log  (USER, writable logs)\n"
+        "  6.62.0.40 schrodinger-box  (USER)\n"
+        "  6.62.0.50 superposition    (USER, FILTERED, ALARMED)\n");
+
+    n = 1;
+    add_node(l, "6.62.0.10", "entangle-a", "Entangled qubit A.", USR, 0);
+    FON("qa.oni", "RjUgRDQgNTUgNDUgRTQgNDMgNTUgMTU=", "b64>rev>hex");
+
+    n = 2;
+    add_node(l, "6.62.0.20", "entangle-b", "Entangled qubit B.", USR, 0);
+    mark_watched(l);
+    FON("qb.oni", "VGSS_0", "rail:3>vig:PLANCK");
+
+    n = 3;
+    add_node(l, "6.62.0.30", "decoherence-log", "Decoherence log.", USR, 0);
+    mark_logs(l);
+    F("q.log",
+        "t=0.00 coherence nominal\n"
+        "t=0.13 superposition knock: h=6626, hbar=1054, c=2998\n"
+        "t=0.21 coherence drifting\n"
+        "t=0.34 collapse code: Fibonacci 0 1 1 2 3 5 8 -> keypad is\n"
+        "t=0.34 collapse code: the next two terms, written together\n"
+        "t=0.55 schrodinger-box observed: TRAP state\n"
+        "t=0.89 superposition alarm armed, 75s window\n");
+
+    n = 4;
+    add_node(l, "6.62.0.40", "schrodinger-box", "Schrodinger's box.", USR, 0);
+    mark_honeypot(l);
+    F("trap.txt", "[LAZARUS] You opened the box. The cat was me.\n");
+
+    n = 5;
+    add_node(l, "6.62.0.50", "superposition", "Superposition core.", USR, 0);
+    set_knock(l, "6626 1054 2998");
+    set_trip(l, 75);
+    F("README.txt", "SUPERPOSITION -- collapse.pin (keypad, two shells).\n");
+    FPIN("collapse.pin", "WDBPTzRLSFY=", PUZZLE_ONION, 0, "b64>atb", "1321");
+}
+
+/* Level 34 (idx 33) — Lazarus Core (EVENT HORIZON+)
+   Every mechanic at once, 8 nodes, 2 attempts. */
+static void init_level33(void) {
+    Level *l = &levels[33];
+    memset(l, 0, sizeof(*l));
+    l->id = 33;
+    strncpy(l->name,       "Lazarus Core", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "EVENT HORIZON+", 15);
+    strncpy(l->objective,
+        "The LAZARUS core. Four fragments, eight nodes, two\n"
+        "unlabelled honeypots. Adaptive detection, sweeps every\n"
+        "6, a firewalled soul-gate with a keypad, a bruteforce\n"
+        "lab, and an ALARMED, WATCHED core that needs override.\n"
+        "Two login attempts. The ossuary log knows the way.", 511);
+    strncpy(l->warnings, "TIMED 300s | ADAPTIVE | SWEEPS /6 | TRIP 60s | 2 ATTEMPTS", 255);
+    strncpy(l->solution_password, "L4ZARUS_N3VER_R1SES", 63);
+    strncpy(l->user_password,     "final_witness",       63);
+    strncpy(l->hint,
+        "HINT: Cred final_witness. grep DECOY lazarus.log: crypt-mirror, ghost-choir.\n"
+        "reliquary (WATCHED): relic.oni x3 -> L4ZARUS_\n"
+        "resurrection-lab (after reliquary): bruteforce, rebirth.locked -> N3VER_\n"
+        "soul-gate: knock 1666 6661 6616, unlock gate.pin 2525 -> R1\n"
+        "lazarus-core: override, ls -a, .core_frag -> SES", MAX_HINT - 1);
+    l->max_attempts       = 2;
+    l->detection_max      = 180;
+    l->detection_per_fail = 30;
+    l->has_timer          = 1;
+    l->timer_seconds      = 300;
+    l->hint_cost          = 25;
+    l->sweep_interval     = 6;
+    l->adaptive_detection = 1;
+    l->available_cmds     = ACT4_CMDS | CMD_KNOCK | CMD_UNLOCK
+                          | CMD_BRUTEFORCE | CMD_OVERRIDE;
+    strncpy(l->bf_node, "resurrection-lab", MAX_NODE_NAME - 1);
+    strncpy(l->bf_file, "rebirth.locked",   MAX_FILENAME - 1);
+    strncpy(l->ov_node, "lazarus-core",     MAX_NODE_NAME - 1);
+    strncpy(l->ov_file, ".core_frag",       MAX_FILENAME - 1);
+
+    int n = 0;
+    add_node(l, "13.13.0.1", "catacomb", "Catacomb entry.", PUB, 1);
+    F("welcome.txt",
+        "[LAZARUS] You followed me all the way down. Good.\n"
+        "Witness cred: final_witness\n");
+    F("topology.txt",
+        "  13.13.0.10 ossuary           (USER, writable logs)\n"
+        "  13.13.0.20 reliquary         (USER, WATCHED)\n"
+        "  13.13.0.30 crypt-mirror      (USER)\n"
+        "  13.13.0.40 resurrection-lab  (USER, after reliquary)\n"
+        "  13.13.0.50 ghost-choir       (USER)\n"
+        "  13.13.0.60 soul-gate         (USER, FILTERED)\n"
+        "  13.13.0.99 lazarus-core      (USER, after soul-gate, ALARMED, WATCHED)\n");
+
+    n = 1;
+    add_node(l, "13.13.0.10", "ossuary", "Ossuary log vault.", USR, 0);
+    mark_logs(l);
+    F("lazarus.log",
+        "boot: seed accepted, rebuilding core\n"
+        "net: crypt-mirror is a DECOY replica\n"
+        "net: ghost-choir is a DECOY replica\n"
+        "gate: soul-gate knock 1666 6661 6616\n"
+        "gate: PIN = the level number where the Architect fell, typed twice\n"
+        "core: silent alarm 60s, sentinel watch active\n");
+
+    n = 2;
+    add_node(l, "13.13.0.20", "reliquary", "Reliquary.", USR, 0);
+    mark_watched(l);
+    FON("relic.oni", "NEYgMzQgNDEgNUEgNDkgNDYgNDggNUY=", "b64>hex>atb");
+
+    n = 3;
+    add_node(l, "13.13.0.30", "crypt-mirror", "Crypt mirror.", USR, 0);
+    mark_honeypot(l);
+    F("trap.txt", "[LAZARUS] A mirror in a crypt. Fitting.\n");
+
+    n = 4;
+    add_node(l, "13.13.0.40", "resurrection-lab", "Resurrection lab.", USR, 0);
+    route_after(l, "reliquary");
+    F("README.txt", "Lab -- rebirth.locked (bruteforce). Requiem cipher.\n");
+    FLOCK("rebirth.locked", "E3ZUL_", PUZZLE_VIGENERE, 0, "REQUIEM");
+
+    n = 5;
+    add_node(l, "13.13.0.50", "ghost-choir", "Ghost choir.", USR, 0);
+    mark_honeypot(l);
+    F("trap.txt", "[LAZARUS] Sing with us.\n");
+
+    n = 6;
+    add_node(l, "13.13.0.60", "soul-gate", "Soul gate.", USR, 0);
+    set_knock(l, "1666 6661 6616");
+    F("README.txt", "SOUL GATE -- gate.pin keypad. XOR'd with SOUL.\n");
+    FPIN("gate.pin", "01 7E", PUZZLE_XOR, 0, "SOUL", "2525");
+
+    n = 7;
+    add_node(l, "13.13.0.99", "lazarus-core", "LAZARUS core.", USR, 0);
+    route_after(l, "soul-gate");
+    set_trip(l, 60);
+    mark_watched(l);
+    F("seal.txt", "CORE -- override seals .core_frag. Then ls -a. Then RUN.\n");
+    FHLOCK(".core_frag", "HVH", PUZZLE_ATBASH, 0, NULL);
+}
+
+/* Level 35 (idx 34) — Zero Point (ZERO POINT, FINAL)
+   Everything, tighter: sweeps every 5, 90s trace, 4-shell onion, 2 attempts. */
+static void init_level34(void) {
+    Level *l = &levels[34];
+    memset(l, 0, sizeof(*l));
+    l->id = 34;
+    strncpy(l->name,       "Zero Point", MAX_LEVEL_NAME - 1);
+    strncpy(l->difficulty, "ZERO POINT",  15);
+    strncpy(l->objective,
+        "LAZARUS's last packet points home -- to the machine the\n"
+        "Architect was first compiled on. Your machine. Every\n"
+        "mechanic you have survived is here at once. Sweeps\n"
+        "every 5. A 90-second trace at the origin. Two attempts.\n"
+        "Find out who the Architect really was.", 511);
+    strncpy(l->warnings, "TIMED 360s | ADAPTIVE | SWEEPS /5 | TRIP 90s | 2 ATTEMPTS | FINAL", 255);
+    strncpy(l->solution_password, "GH0ST_1S_TH3_ARCH1TECT", 63);
+    strncpy(l->user_password,     "GHOST",                  63);
+    strncpy(l->hint,
+        "HINT: Cred: who are you? (GHOST, see whoami). grep echo origin.log -> decoys 3 + recursion.\n"
+        "memory-2 (WATCHED): self.oni x4 -> GH0ST_\n"
+        "memory-4 (after memory-2): bruteforce, self.locked -> 1S_\n"
+        "origin-gate: knock 1010 0101 1111, unlock core.pin 3434 -> TH3_\n"
+        "origin: override, ls -a, .origin_frag x2 -> ARCH1TECT", MAX_HINT - 1);
+    l->max_attempts       = 2;
+    l->detection_max      = 200;
+    l->detection_per_fail = 35;
+    l->has_timer          = 1;
+    l->timer_seconds      = 360;
+    l->hint_cost          = 30;
+    l->sweep_interval     = 5;
+    l->adaptive_detection = 1;
+    l->available_cmds     = ACT4_CMDS | CMD_KNOCK | CMD_UNLOCK
+                          | CMD_BRUTEFORCE | CMD_OVERRIDE;
+    strncpy(l->bf_node, "memory-4",     MAX_NODE_NAME - 1);
+    strncpy(l->bf_file, "self.locked",  MAX_FILENAME - 1);
+    strncpy(l->ov_node, "origin",       MAX_NODE_NAME - 1);
+    strncpy(l->ov_file, ".origin_frag", MAX_FILENAME - 1);
+
+    int n = 0;
+    add_node(l, "0.0.0.0", "null-space", "Nowhere. Home.", PUB, 1);
+    F("welcome.txt",
+        "[ZERO] Hello again.\n"
+        "[ZERO] The login is the name you have been typing all along.\n"
+        "[ZERO] whoami, if you need reminding.\n");
+    F("topology.txt",
+        "  0.0.0.1 memory-1     (USER, writable logs)\n"
+        "  0.0.0.2 memory-2     (USER, WATCHED)\n"
+        "  0.0.0.3 memory-3     (USER)\n"
+        "  0.0.0.4 memory-4     (USER, after memory-2)\n"
+        "  0.0.0.5 recursion    (USER)\n"
+        "  0.0.0.6 origin-gate  (USER, FILTERED)\n"
+        "  0.0.0.7 origin       (USER, after origin-gate, ALARMED, WATCHED)\n");
+
+    n = 1;
+    add_node(l, "0.0.0.1", "memory-1", "First memory.", USR, 0);
+    mark_logs(l);
+    F("origin.log",
+        "compile #1: target=architect, author=GHOST\n"
+        "mem: memory-3 is an echo, not a memory\n"
+        "mem: recursion is an echo, not a memory\n"
+        "gate: origin-gate knock 1010 0101 1111\n"
+        "gate: PIN = systems you breached before this one, typed twice\n"
+        "origin: silent alarm 90s, sentinel cadence 5\n");
+
+    n = 2;
+    add_node(l, "0.0.0.2", "memory-2", "Second memory.", USR, 0);
+    mark_watched(l);
+    F("README.txt", "Four shells. Peel fast -- you are being watched.\n");
+    FON("self.oni", "RjUgNzQgODQgMDMgMzUgNDU=", "b64>rev>hex>atb");
+
+    n = 3;
+    add_node(l, "0.0.0.3", "memory-3", "Third memory?", USR, 0);
+    mark_honeypot(l);
+    F("trap.txt", "[ZERO] That never happened.\n");
+
+    n = 4;
+    add_node(l, "0.0.0.4", "memory-4", "Fourth memory.", USR, 0);
+    route_after(l, "memory-2");
+    F("README.txt", "self.locked -- bruteforce. Mirror cipher.\n");
+    FLOCK("self.locked", "1E_", PUZZLE_VIGENERE, 0, "MIRROR");
+
+    n = 5;
+    add_node(l, "0.0.0.5", "recursion", "Recursion.", USR, 0);
+    mark_honeypot(l);
+    F("trap.txt", "[ZERO] See: recursion.\n");
+
+    n = 6;
+    add_node(l, "0.0.0.6", "origin-gate", "Origin gate.", USR, 0);
+    set_knock(l, "1010 0101 1111");
+    F("README.txt", "ORIGIN GATE -- core.pin keypad, rail-fenced (3).\n");
+    FPIN("core.pin", "TH_3", PUZZLE_RAIL, 3, NULL, "3434");
+
+    n = 7;
+    add_node(l, "0.0.0.7", "origin", "Origin.", USR, 0);
+    route_after(l, "origin-gate");
+    set_trip(l, 90);
+    mark_watched(l);
+    F("seal.txt", "[ZERO] override. ls -a. Two shells. Then say your name.\n");
+    FHLOCK(".origin_frag",
+        "31 42 20 31 37 20 31 31 20 30 37 20 36 42 20 31 31 20 31 37 20 30 43 20 30 45",
+        PUZZLE_ONION, 0, "hex>xor:ZERO");
+}
+
+/* Wires bruteforce/override targets for the legacy levels (1-25) that used
+   to be hard-coded in commands.c. */
+static void wire_legacy_targets(void) {
+    struct { int idx; const char *bfn, *bff, *ovn, *ovf; } t[] = {
+        { 4,  "vault-entry",    "vault_access.txt",    NULL, NULL },
+        { 7,  NULL, NULL,                              "neural-net",     ".genesis_key" },
+        { 12, "vendor-hub",     "locked_comms.enc",    NULL, NULL },
+        { 13, "quantum-relay",  "locked_manifest.txt", "quantum-core",   ".classified_key" },
+        { 14, "fragment-beta",  "day.enc",             "omega-core",     ".deactivation_key" },
+        { 20, "staging",        "stake.locked",        "payload-vault",  ".winner_frag" },
+        { 23, "enclave-b",      "frag_b.locked",       "phantom-c2",     ".frag_c" },
+        { 24, "shard-gimel",    "mirror.locked",       "architect-core", ".final_frag" },
+    };
+    for (size_t i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        Level *l = &levels[t[i].idx];
+        if (t[i].bfn) {
+            strncpy(l->bf_node, t[i].bfn, MAX_NODE_NAME - 1);
+            strncpy(l->bf_file, t[i].bff, MAX_FILENAME - 1);
+        }
+        if (t[i].ovn) {
+            strncpy(l->ov_node, t[i].ovn, MAX_NODE_NAME - 1);
+            strncpy(l->ov_file, t[i].ovf, MAX_FILENAME - 1);
+        }
+    }
+}
+
+/* Initialises all 35 levels in order. Called once at program startup before
    the game loop begins. All Level structs are populated into the static array
    and remain unchanged for the duration of the session. */
 void init_levels(void) {
@@ -1644,6 +3426,27 @@ void init_levels(void) {
     init_level12();
     init_level13();
     init_level14();
+    init_level15();
+    init_level16();
+    init_level17();
+    init_level18();
+    init_level19();
+    init_level20();
+    init_level21();
+    init_level22();
+    init_level23();
+    init_level24();
+    init_level25();
+    init_level26();
+    init_level27();
+    init_level28();
+    init_level29();
+    init_level30();
+    init_level31();
+    init_level32();
+    init_level33();
+    init_level34();
+    wire_legacy_targets();
 }
 
 /* Returns a pointer to the Level with the given id, or NULL if id is out of

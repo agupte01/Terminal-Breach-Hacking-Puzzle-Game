@@ -1,6 +1,20 @@
-# Terminal Breach v2.0
+# Terminal Breach v4.0
 
-A terminal-based hacking puzzle game written in C. You play as **GHOST** — an elite black-hat operator working through 16 escalating network intrusion scenarios. Each level introduces new commands, tighter detection limits, multi-step puzzles, and higher stakes.
+A terminal-based hacking puzzle game written in C. You play as **GHOST** — an elite black-hat operator working through **35 escalating network intrusion scenarios**. Each level introduces new commands, tighter detection limits, multi-step puzzles, and higher stakes.
+
+> **v3.0 adds 10 new levels (16–25)** introducing four new cipher families
+> (XOR, Vigenère, hex, base64), routing-order constraints, honeypot decoy
+> nodes, log-grep forensics, multi-fragment key assembly via `combine`, and
+> on the final stage adaptive detection that punishes repeated commands.
+>
+> **v4.0 adds Act IV, The Lazarus Protocol (levels 26–35).** The Architect is
+> dead, but its dead-man seed fired. New mechanics: Atbash and rail-fence
+> ciphers, multi-layer **onion** payloads peeled one `decrypt` at a time,
+> **port knocking** (`knock`), **keypad locks** (`unlock`), **log wiping**
+> (`wipe`), **sentinel sweeps** that punish lingering on watched hosts,
+> **silent-alarm tripwires** that start a reverse-trace countdown, and hints
+> that cost detection. Each level adds one more mechanic on top of the last.
+> v4.0 also fixes several long-standing bugs (see *Changelog v4.0* below).
 
 ```
   ████████╗███████╗██████╗ ███╗   ███╗██╗███╗   ██╗ █████╗ ██╗
@@ -9,7 +23,7 @@ A terminal-based hacking puzzle game written in C. You play as **GHOST** — an 
      ██║   ██╔══╝  ██╔══██╗██║╚██╔╝██║██║██║╚██╗██║██╔══██║██║
      ██║   ███████╗██║  ██║██║ ╚═╝ ██║██║██║ ╚████║██║  ██║███████╗
      ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝
-  ██████╗ ██████╗ ███████╗ █████╗  ██████╗██╗  ██╗  v2.0
+  ██████╗ ██████╗ ███████╗ █████╗  ██████╗██╗  ██╗  v4.0
   ██╔══██╗██╔══██╗██╔════╝██╔══██╗██╔════╝██║  ██║
   ██████╔╝██████╔╝█████╗  ███████║██║     ███████║
   ██╔══██╗██╔══██╗██╔══╝  ██╔══██║██║     ██╔══██║
@@ -18,6 +32,8 @@ A terminal-based hacking puzzle game written in C. You play as **GHOST** — an 
 ```
 
 ---
+
+> 📘 **Stuck?** [WALKTHROUGH.md](WALKTHROUGH.md) has exact, tested command sequences for all 35 levels.
 
 ## Table of Contents
 
@@ -52,18 +68,30 @@ A terminal-based hacking puzzle game written in C. You play as **GHOST** — an 
   - [Level 13 — Underground Market](#level-13--underground-market-extreme)
   - [Level 14 — Quantum Research Lab](#level-14--quantum-research-lab-extreme)
   - [Level 15 — GHOST Protocol](#level-15--ghost-protocol-legendary)
+  - [Level 16 — Crypto Exchange Heist](#level-16--crypto-exchange-heist-mythic)
+  - [Level 17 — Industrial SCADA Sabotage](#level-17--industrial-scada-sabotage-mythic)
+  - [Level 18 — Telecom Backbone Hijack](#level-18--telecom-backbone-hijack-mythic)
+  - [Level 19 — Spy Satellite Imagery Vault](#level-19--spy-satellite-imagery-vault-apex)
+  - [Level 20 — Forensic Counter-Hack](#level-20--forensic-counter-hack-apex)
+  - [Level 21 — Darknet Auction](#level-21--darknet-auction-apex)
+  - [Level 22 — Black Site Dossier](#level-22--black-site-dossier-legendary)
+  - [Level 23 — Pacemaker Killswitch](#level-23--pacemaker-killswitch-legendary)
+  - [Level 24 — Cobalt Mirage Showdown](#level-24--cobalt-mirage-showdown-legendary)
+  - [Level 25 — The Architect](#level-25--the-architect-transcendent)
+  - [Act IV — The Lazarus Protocol (L26–L35)](#act-iv--the-lazarus-protocol-levels-2635)
 - [Detection Math Reference](#detection-math-reference)
 - [Adding New Levels](#adding-new-levels)
+- [Changelog v4.0](#changelog-v40)
 
 ---
 
 ## Quick Start
 
-**Requirements:** GCC and `make` (standard on Linux/macOS).
+**Requirements:** GCC (or Clang) and `make`, which come standard on Linux and macOS.
 
 ```bash
-git clone <repo-url>
-cd TerminalBreach
+git clone https://github.com/agupte01/Terminal-Breach-Hacking-Puzzle-Game.git
+cd Terminal-Breach-Hacking-Puzzle-Game/src
 make
 ./terminal_breach
 ```
@@ -74,31 +102,39 @@ To rebuild from scratch:
 make clean && make
 ```
 
+Jump to a level for practice (1-based), optionally without the typing animation:
+
+```bash
+TB_START_LEVEL=26 TB_FAST=1 ./terminal_breach
+```
+
 ---
 
 ## File Structure
 
 ```
-TerminalBreach/
-├── main.c          Game loop, boot sequence, win/loss screens, score
-├── commands.c      All command handlers and the command dispatcher
-├── commands.h      Command declarations and bitmask definitions
-├── levels.c        All 16 level definitions with nodes, files, puzzles
-├── levels.h        Core data structures: GameFile, NetworkNode, Level, GameState
-├── network.c       Node navigation helpers, file unlock/decrypt bitmask logic
-├── network.h       network.c public API
-├── puzzles.c       Caesar cipher, reverse text, and binary decoders
-├── puzzles.h       puzzles.c public API
-├── utils.c         Detection bar, slow_print, boot sequence, mission briefing
-├── utils.h         utils.c public API
-├── save.c          Save/load game state to terminal_breach.sav
-├── save.h          save.c public API
-└── Makefile        Build configuration
+Terminal-Breach-Hacking-Puzzle-Game/
+├── README.md                              This file
+├── WALKTHROUGH.md                         Tested step-by-step solutions for all 35 levels
+├── COMPACT_README.md                      One-page reference card
+├── REPORT.md                              Technical design report (source of the .docx)
+├── Terminal_Breach_Technical_Report.docx  Formatted report, generated from REPORT.md
+└── src/
+    ├── main.c          Game loop, level transitions, win/loss screens, score
+    ├── commands.c/h    All command handlers, sweeps/trace ticks, dispatcher
+    ├── levels.c/h      All 35 level definitions; core data structures
+    ├── network.c/h     Node lookup, file unlock/decrypt bitmask helpers
+    ├── puzzles.c/h     Caesar, reverse, binary, hex, XOR, Vigenère, Base64,
+    │                   Atbash, rail-fence and onion (multi-layer) decoders
+    ├── utils.c/h       Detection bar, prompt with live timers, slow_print, briefings
+    ├── save.c/h        Save/load to terminal_breach.sav
+    ├── gen_report.py   Builds the .docx from ../REPORT.md (needs python-docx)
+    └── Makefile
 ```
 
-**Build produces:** `terminal_breach` — a single self-contained binary with no runtime dependencies beyond the C standard library.
+**Build produces:** `terminal_breach`, a single self-contained binary with no runtime dependencies beyond the C standard library.
 
-**Compiler flags:** `-Wall -Wextra -std=c11 -O2` — zero warnings.
+**Compiler flags:** `-Wall -Wextra -std=c11 -O2`, and the build has zero warnings.
 
 ---
 
@@ -226,9 +262,13 @@ Your current node IP is always shown in the prompt.
 You can store strings between commands using the inventory:
 
 ```
-save <data>     → store a string (up to 20 items)
+save <data>     → store a string (up to 30 items)
 inventory       → list all stored items
+combine [a b]   → join slots into a new item (L16+)
+drop <n|all>    → remove a slot / clear everything (L16+)
 ```
+
+The inventory is **cleared at every level transition**, because fragments never carry between targets. That way `combine 1 2 3` always refers to what you saved on the current level. (`loadgame` keeps the inventory it restores.)
 
 Useful for noting partial passwords while navigating multi-node levels. Example:
 
@@ -237,7 +277,7 @@ ghost@10.0.0.1[guest]:~$ decrypt binary.sys
 [+] DECODED: NEURAL_
 
 ghost@10.0.0.1[guest]:~$ save NEURAL_
-[+] Saved: "NEURAL_" (slot 1/20)
+[+] Saved: "NEURAL_" (slot 1/30)
 ```
 
 ### Timer System
@@ -257,7 +297,7 @@ savegame    → writes progress to terminal_breach.sav
 loadgame    → restores from terminal_breach.sav
 ```
 
-The save file stores your current level, score, total fails, command count, and inventory. On load, the game transitions to the saved level so you resume exactly where you left off.
+The save file stores your current level, score, per-level scores, total fails, command count, and inventory. On load, the game restarts the saved level (not the one after it, which was a v3 bug) with your score and inventory intact.
 
 ### Scoring
 
@@ -269,21 +309,21 @@ Level score = (level_number × 1000) - (failed_attempts × 100) - (detection × 
 
 Minimum level score is 0 (no negative contributions to total).
 
-A perfect run with zero fails and zero detection scores **136,000 points** total.
+The theoretical maximum (zero fails and zero detection on every level) is **630,000 points** (1,000 + 2,000 + … + 35,000). Bruteforce and override are mandatory on some levels, so real runs land a little lower: the verified clean playthrough in [WALKTHROUGH.md](WALKTHROUGH.md) scores **624,135**.
 
-Per-level base scores: L1=1000, L2=2000, … L8=8000, L9=9000, … L16=16000.
+Per-level base scores: L1=1000, L2=2000, … L25=25000, … L35=35000.
 
 ### Ranks
 
-Your final rank is determined by total failed login attempts across all 16 levels:
+Your final rank is determined by total failed login attempts across all 35 levels:
 
 | Total Fails | Rank                              |
 |-------------|-----------------------------------|
 | 0           | **GHOST LEGEND** — Flawless run!  |
-| 1–3         | **PHANTOM** — Near perfect!       |
-| 4–8         | **SPECTRE** — Well played.        |
-| 9–15        | **AGENT** — Good effort.          |
-| 16+         | **ROOKIE** — Keep training.       |
+| 1–4         | **PHANTOM** — Near perfect!       |
+| 5–10        | **SPECTRE** — Well played.        |
+| 11–20       | **AGENT** — Good effort.          |
+| 21+         | **ROOKIE** — Keep training.       |
 
 ---
 
@@ -310,7 +350,41 @@ Your final rank is determined by total failed login attempts across all 16 level
 | `scan`             | Level 3  | Discover all live hosts on the network segment  |
 | `connect <ip>`     | Level 3  | Connect to a discovered host                    |
 | `bruteforce`       | Level 5  | Force-bypass authentication (high detection!)   |
-| `override`         | Level 7  | Override neural security (AI Core only, very high detection!) |
+| `override`         | Level 7  | Override neural security (very high detection!) |
+| `combine [a b ..]` | Level 16 | Concatenate inventory items into a new entry    |
+| `grep <pat> <file>`| Level 20 | Filter file lines by substring pattern          |
+| `drop <slot\|all>` | Level 16 | Remove an inventory slot (or clear all)         |
+| `wipe`             | Level 26 | Scrub logs on a host that keeps them (once per host); refunds one per-fail of detection |
+| `knock <host> <port>` | Level 27 | Port-knock a FILTERED host; the right order opens it, a wrong port resets the sequence and costs ½ per-fail |
+| `unlock <file> <code>` | Level 28 | Enter a keypad code; each wrong code this level costs more than the last |
+
+### Puzzle types
+
+| Type         | First level | Decoder                                              |
+|--------------|-------------|------------------------------------------------------|
+| Caesar       | L2          | Letter shift (decode = subtract shift)               |
+| Reverse      | L2          | String reversal                                      |
+| Binary       | L8          | 8-bit binary tokens → ASCII                          |
+| **Hex**      | **L16**     | Hex byte pairs → ASCII                               |
+| **XOR**      | **L16**     | Hex bytes XOR'd against repeating ASCII key          |
+| **Vigenère** | **L17**     | Letter-by-letter shift using a repeating keyword     |
+| **Base64**   | **L18**     | Standard base64 → ASCII                              |
+| **Atbash**   | **L26**     | Mirror alphabet A↔Z, B↔Y … (self-inverse)            |
+| **Rail fence** | **L26**   | Zig-zag transposition across N rails                 |
+| **Onion**    | **L27**     | Stacked layers; each `decrypt` peels ONE (`ls` shows `[ONI k/n]`) |
+
+### Special node mechanics
+
+- **Honeypot** *(L21, L25)* — Connecting fires `2 × detection_per_fail` extra detection. Read the topology before you scan-and-connect.
+- **Routing order** *(L17, L18, L22, L23, L25)* — Some nodes refuse a connection unless a specific prerequisite hop was visited earlier this level. Skipping the route costs detection.
+- **Adaptive detection** *(L25, L32, L34, L35)* — Repeating the same command name in a row charges escalating extra detection.
+- **Writable logs** *(L26+)* — `wipe` on such a host refunds one per-fail of detection, once per host. Wiping at 0% detection gains nothing.
+- **Port knocking** *(L27, L30, L32–L35)* — FILTERED hosts refuse `connect` (½ per-fail) until you `knock` their ports in order.
+- **Keypads** *(L28, L29, L31, L33–L35)* — `[PIN]` files show up in `ls`. The codes are hidden in logs and riddles.
+- **Sentinel sweeps** *(L28, L31–L35)* — every N commands (any command counts) a sweep runs, and if you're on a WATCHED host you pay one per-fail. `status` shows the countdown, and you get a warning one command before. Onion peel progress is kept, so you can split long peels across visits.
+- **Silent alarm / tripwire** *(L29, L33–L35)* — the first connect to an ALARMED host starts a reverse-trace countdown (shown in the prompt as `[TRACE n]`) that runs for the rest of the level.
+- **Hint cost** *(L26+)* — `hint` charges detection. The automatic hint on your last login attempt is still free.
+- **Bruteforce safety** *(all levels)* — running `bruteforce` on the wrong host is refused **without using up** its single use.
 
 ---
 
@@ -806,7 +880,358 @@ NovaTech Quantum's facility holds experiment BREACH. **First level requiring bot
 5. `connect 0.zero.0.40` → fragment-delta; `cat delta_ops.txt` → shift 21 (`blackout_info.txt` auto-unlocked)
 6. `connect 0.zero.0.30` → fragment-gamma; `decrypt black.enc` → `BLACK`; `save BLACK`
 7. `connect 0.zero.0.99` → omega-core; `override` → `.deactivation_key` unlocked; `ls -a`; `cat .deactivation_key` → `OUT`
-8. `login ZERO_DAY_BLACKOUT` → **GAME COMPLETE**
+8. `login ZERO_DAY_BLACKOUT` → **L15 complete — proceed to MYTHIC tier**
+
+---
+
+### Level 16 — Crypto Exchange Heist `MYTHIC`
+
+**Target:** ZenithCoin cold-wallet vault — drain via the HSM bridge.
+**Topology:** 4 nodes — `gateway` (entry) → `trading-engine` → `hsm-bridge` → `cold-vault`.
+**Solution password:** `ZEN1TH_C0LD_V@ULT` · **User password:** `trader_oa`
+**Detection:** 80, +20 · **Timer:** 240s · **Attempts:** 4
+**New mechanics:** hex bytes (`PUZZLE_HEX`), XOR cipher (`PUZZLE_XOR`), `combine` command.
+
+Fragment chain:
+- `frag1.hex` (trading-engine) — hex-to-ASCII → `ZEN1TH_`
+- `frag2.xor` (hsm-bridge)     — XOR with key `ZENITH` → `C0LD_`
+- `frag3.enc` (cold-vault)     — Caesar-13 → `V@ULT`
+
+Walkthrough:
+1. `cat staff_memo.txt` → user creds `trader_oa`
+2. `login trader_oa` → USER tier
+3. `scan` → 3 hosts; `connect 10.10.10.20` → trading-engine
+4. `decrypt frag1.hex` → `ZEN1TH_`; `save ZEN1TH_`
+5. `connect 10.10.10.30` → hsm-bridge; `decrypt frag2.xor` → `C0LD_`; `save C0LD_`
+6. `connect 10.10.10.40` → cold-vault; `decrypt frag3.enc` → `V@ULT`; `save V@ULT`
+7. `combine 1 2 3` → `ZEN1TH_C0LD_V@ULT` stored as new inventory slot
+8. `login ZEN1TH_C0LD_V@ULT` → **L16 complete**
+
+---
+
+### Level 17 — Industrial SCADA Sabotage `MYTHIC`
+
+**Target:** City water-grid pump-station PLC.
+**Topology:** 5 nodes — `scada-master` (entry) → `rtu-1`, `rtu-2`, `historian`, `plc-core`.
+**Solution password:** `SET_P01NT_OVERRIDE` · **User password:** `plc_op_3`
+**Detection:** 70, +25 · **Timer:** 240s · **Attempts:** 4
+**New mechanics:** Vigenère cipher (`PUZZLE_VIGENERE`), routing-order requirement on `plc-core` (must visit `historian` first).
+
+Fragment chain:
+- `setpoint.vig` (rtu-1) — Vigenère key `HYDRA` → `SET_P01NT_`
+- `token.rev`    (rtu-2) — reverse text → `OVERRIDE`
+
+Walkthrough:
+1. `cat login_banner.txt` → cred `plc_op_3`; `login plc_op_3`
+2. `scan`; `connect 172.16.0.20` → rtu-1; `decrypt setpoint.vig` → `SET_P01NT_`; `save`
+3. `connect 172.16.0.21` → rtu-2; `decrypt token.rev` → `OVERRIDE`; `save`
+4. `connect 172.16.0.30` → historian *(routing prerequisite)*
+5. `connect 172.16.0.99` → plc-core (now accepted)
+6. `combine 1 2` → `SET_P01NT_OVERRIDE`; `login SET_P01NT_OVERRIDE` → **L17 complete**
+
+> Skipping the historian and trying to reach plc-core directly costs `detection_per_fail` and refuses the connection.
+
+---
+
+### Level 18 — Telecom Backbone Hijack `MYTHIC++`
+
+**Target:** Tier-1 ISP via BGP route reflector.
+**Topology:** 5 nodes — `edge-router` (entry) → `bgp-reflector` → `transit-core` (routed) + `peering-x`, `route-optimizer`.
+**Solution password:** `BGP_HIJACK_PRIME` · **User password:** `net_eng_99`
+**Detection:** 70, +20 · **Timer:** 200s · **Attempts:** 4 · `bruteforce` available.
+**New mechanics:** base64 (`PUZZLE_BASE64`), routing constraint enforcing AS-path traversal.
+
+Fragment chain:
+- `frag1.b64` (bgp-reflector) — base64 → `BGP_`
+- `frag2.hex` (transit-core)  — hex → `HIJACK_`
+- `frag3.xor` (peering-x)     — XOR key `AS1337` → `PRIME`
+
+Walkthrough:
+1. `cat peering_banner.txt` → `net_eng_99`; `login net_eng_99`
+2. `scan`; `connect 10.20.0.10` → bgp-reflector; `decrypt frag1.b64` → `BGP_`; `save`
+3. `connect 10.20.0.20` → transit-core *(only succeeds because step 2 visited bgp-reflector)*; `decrypt frag2.hex` → `HIJACK_`; `save`
+4. `connect 10.20.0.30` → peering-x; `decrypt frag3.xor` → `PRIME`; `save`
+5. `combine 1 2 3` → `BGP_HIJACK_PRIME`; `login BGP_HIJACK_PRIME` → **L18 complete**
+
+---
+
+### Level 19 — Spy Satellite Imagery Vault `APEX`
+
+**Target:** Recover the KEYHOLE recon archive.
+**Topology:** 5 nodes — `ground-station` (entry) → `uplink-relay` → `decryption-rig` + `vault-A` (live), `vault-B` (decoy).
+**Solution password:** `KEYHOLE_RECON_X9` · **User password:** `ground_op_7`
+**Detection:** 60, +30 · **Timer:** 200s · **Attempts:** 3.
+
+Fragment chain:
+- `keyhole.vig` (uplink-relay)   — Vigenère key `ORBIT` → `KEYHOLE_`
+- `recon.hex`   (decryption-rig) — hex → `RECON_`
+- `tail.rev`    (vault-A)        — reverse → `X9`
+
+> **vault-B is a decoy** — its `tail.rev` decodes to `Q7`. The README on each vault notes which one is "live" — read both before assembling.
+
+Walkthrough:
+1. `login ground_op_7`
+2. `scan`; pull frag1 from uplink-relay, frag2 from decryption-rig.
+3. `connect 10.50.0.30` → vault-A; `decrypt tail.rev` → `X9`; `save`
+4. `combine 1 2 3` → `KEYHOLE_RECON_X9`; `login` → **L19 complete**
+
+---
+
+### Level 20 — Forensic Counter-Hack `APEX`
+
+**Target:** Trace and burn the attacker's C2.
+**Topology:** 5 nodes — `ir-bastion` (entry) + `relay-honey`, `attacker-relay`, `attacker-c2`, `identity-leak`.
+**Solution password:** `BURN_THE_C2_NOW` · **User password:** `ir_analyst`
+**Detection:** 70, +20 · **Timer:** 300s · **Attempts:** 4.
+**New mechanic:** `grep <pattern> <file>` — filter log lines.
+
+Fragment chain:
+- `burn.enc` (attacker-relay) — Caesar-9 → `BURN_THE_`
+- `c2.hex`   (attacker-c2)    — hex → `C2_NOW`
+
+The Caesar shift is **derived from the auth log**: the seconds field of the line containing `KEY_MISMATCH` (`03:14:09` → shift 9).
+
+Walkthrough:
+1. `login ir_analyst`; `scan`
+2. `connect 10.0.0.67` → relay-honey; `grep KEY_MISMATCH auth.log` → `[2026-04-15 03:14:09] AUTH_FAIL src=66.249.13.37 user=root reason=KEY_MISMATCH`
+3. `connect 10.0.0.68` → attacker-relay; `decrypt burn.enc` → `BURN_THE_` *(shift 9)*
+4. `connect 10.0.0.69` → attacker-c2; `decrypt c2.hex` → `C2_NOW`
+5. `combine 1 2`; `login BURN_THE_C2_NOW` → **L20 complete**
+
+---
+
+### Level 21 — Darknet Auction `APEX+`
+
+**Target:** Acquire a zero-day from a darknet auction. Two of the listings are honeypots.
+**Topology:** 6 nodes — `auction-board` (entry), `broker`, `escrow` *(HONEYPOT)*, `buyer-mirror` *(HONEYPOT)*, `staging`, `payload-vault`.
+**Solution password:** `Z3R0D@Y_W1NN3R` · **User password:** `dn_bidder`
+**Detection:** 100, +20 · **Timer:** 240s · **Attempts:** 3 · `bruteforce` + `override` required.
+**New mechanic:** Honeypot nodes — connecting fires `2 × detection_per_fail` extra detection. Read the topology before connecting.
+
+Fragment chain:
+- `stake.locked`  (staging)       — locked + XOR key `STAKE` → `Z3R0D@Y_`
+- `.winner_frag`  (payload-vault) — hidden + locked + reverse → `W1NN3R`
+
+Walkthrough:
+1. `login dn_bidder`; `scan`
+2. **Skip** `escrow` and `buyer-mirror` — both are honeypots.
+3. `connect 127.42.0.30` → staging; `bruteforce` → unlocks `stake.locked`; `decrypt stake.locked` → `Z3R0D@Y_`; `save`
+4. `connect 127.42.0.40` → payload-vault; `override` → `.winner_frag` unlocked; `ls -a`; `decrypt .winner_frag` → `W1NN3R`; `save`
+5. `combine 1 2`; `login Z3R0D@Y_W1NN3R` → **L21 complete**
+
+---
+
+### Level 22 — Black Site Dossier `LEGENDARY+`
+
+**Target:** Air-gapped intelligence vault with a 180-second skiff window.
+**Topology:** 5 nodes — `skiff-bastion` (entry) + `vault-alpha`, `vault-bravo`, `vault-charlie`, `cipher-index`.
+**Solution password:** `BLACK_SITE_BURN_03` · **User password:** `classified_a`
+**Detection:** 80, +25 · **Timer:** 180s · **Attempts:** 3.
+
+Fragment chain:
+- `alpha.vig`   (vault-alpha)   — Vigenère key `REDACT` → `BLACK_`
+- `bravo.bin`   (vault-bravo)   — binary → `SITE_`
+- `charlie.enc` (vault-charlie) — Caesar-23 → `BURN_03`
+
+`cipher-index` documents both keys (`REDACT` and `shift23`) — visit it early to confirm.
+
+Walkthrough:
+1. `login classified_a`; `scan`; `connect 10.99.0.40` → cipher-index; `cat keys.txt`
+2. Pull alpha, bravo, charlie fragments in any order.
+3. `combine 1 2 3`; `login BLACK_SITE_BURN_03` → **L22 complete**
+
+---
+
+### Level 23 — Pacemaker Killswitch `LEGENDARY+`
+
+**Target:** Stop a worm spreading through hospital implants.
+**Topology:** 7 nodes — `hospital-bastion` (entry) → strict route `ER → ICU → imaging → pharmacy → mdm → pacemaker-net`.
+**Solution password:** `K1LLSWITCH_ARMED` · **User password:** `med_admin_x`
+**Detection:** 90, +30 · **Timer:** 240s · **Attempts:** 3.
+**Mechanic:** Five-step routing chain — every node beyond ER demands the previous hop have been visited this level.
+
+Fragment chain:
+- `kill.hex`  (ER)        — hex → `K1LLSWITCH_`
+- `armed.vig` (pharmacy) — Vigenère key `HIPAA` → `ARMED`
+
+Walkthrough:
+1. `login med_admin_x`; `scan`
+2. `connect ER` → `decrypt kill.hex` → `K1LLSWITCH_`; `save`
+3. `connect ICU` → `connect imaging` → `connect pharmacy`
+4. `decrypt armed.vig` → `ARMED`; `save`
+5. `connect mdm` → `connect pacemaker-net`; `combine 1 2`; `login K1LLSWITCH_ARMED` → **L23 complete**
+
+> Trying to jump straight to `pharmacy` from `ER` is rejected with a routing message and a small detection cost.
+
+---
+
+### Level 24 — Cobalt Mirage Showdown `LEGENDARY++`
+
+**Target:** Take down nation-state APT 'Cobalt Mirage'. Three compartmented enclaves.
+**Topology:** 5 nodes — `soc-bastion` (entry) + `enclave-a`, `enclave-b`, `enclave-c`, `phantom-c2`.
+**Solution password:** `COBALT_M1RAGE_END` · **User password:** `agent_apt`
+**Detection:** 100, +30 · **Timer:** 180s · **Attempts:** 3 · `bruteforce` + `override`.
+
+Fragment chain:
+- `frag_a.b64`    (enclave-a)  — base64 → `COBALT_`
+- `frag_b.locked` (enclave-b)  — locked + hex → `M1RAGE_` (bruteforce on this node)
+- `.frag_c`       (phantom-c2) — hidden + locked + XOR key `PHANTOM` → `END` (override on this node)
+
+Walkthrough:
+1. `login agent_apt`; `scan`
+2. `connect enclave-a` → `decrypt frag_a.b64` → `COBALT_`
+3. `connect enclave-b` → `bruteforce` → `decrypt frag_b.locked` → `M1RAGE_`
+4. `connect phantom-c2` → `override` → `ls -a` → `decrypt .frag_c` → `END`
+5. `combine 1 2 3`; `login COBALT_M1RAGE_END` → **L24 complete**
+
+---
+
+### Level 25 — The Architect `TRANSCENDENT`
+
+**Target:** A rogue AGI you helped build. Final boss.
+**Topology:** 6 nodes — `ghost-shell` (entry) + `shard-aleph`, `shard-beth`, `shard-gimel`, `shard-daleth` *(HONEYPOT)*, `architect-core`.
+**Solution password:** `ARCH1TECT_DECOMM_INF` · **User password:** `architect_mirror`
+**Detection:** 260, +40 · **Timer:** 120s · **Attempts:** 2 · `bruteforce` + `override` · **adaptive detection on**.
+**Mechanic:** Adaptive detection — repeating the same command name 3+ times in a row charges escalating extra detection. Vary your moves.
+
+Fragment chain:
+- `aleph.b64`     (shard-aleph)   — base64 → `ARCH`
+- `beth.hex`      (shard-beth)    — hex → `1TECT_`
+- `mirror.locked` (shard-gimel)   — locked + Vigenère key `GHOST` → `DECOMM` (bruteforce here)
+- `.final_frag`   (architect-core)— hidden + locked + reverse → `_INF` (override here)
+
+Walkthrough:
+1. `login architect_mirror`; `scan`
+2. `connect shard-aleph` → `decrypt aleph.b64` → `ARCH`; `save`
+3. `connect shard-beth` → `decrypt beth.hex` → `1TECT_`; `save`
+4. **Avoid** `shard-daleth` (honeypot).
+5. `connect shard-gimel` → `bruteforce` → `decrypt mirror.locked` → `DECOMM`; `save`
+6. `connect architect-core` → `override` → `ls -a` → `decrypt .final_frag` → `_INF`; `save`
+7. `combine 1 2 3 4`; `login ARCH1TECT_DECOMM_INF` → **Act III complete**, but something is still talking.
+
+---
+
+## Act IV — The Lazarus Protocol (Levels 26–35)
+
+> Full command-by-command solutions (timed around every sentinel sweep) are in [WALKTHROUGH.md](WALKTHROUGH.md#act-iv--the-lazarus-protocol).
+
+> The Architect is dead. On decommission, its dead-man seed **LAZARUS** fired
+> and began rebuilding it across the network. Every level adds one more
+> mechanic, and the last one puts them all together.
+
+| Level | Name | Difficulty | New pressure |
+|-------|------|-----------|--------------|
+| 26 | Lazarus Seed | OMEGA | Atbash, rail fence, `wipe`, `drop`, hints cost detection |
+| 27 | Onion Relay | OMEGA | Onion payloads (one layer per `decrypt`), port knocking, honeypot |
+| 28 | Sentinel Grid | OMEGA+ | Sentinel sweeps every 6 commands, keypad with escalating penalty |
+| 29 | Silent Alarm | OMEGA+ | Tripwire: 60s reverse trace from first touch of the vault |
+| 30 | Mirror Maze | SINGULARITY | 3 *unlabelled* honeypots out of 6 mirrors (deduce from DNS TTLs) |
+| 31 | Deadman's Vault | SINGULARITY | Sweeps + PIN rotation + bruteforce + override |
+| 32 | Hydra Botnet | SINGULARITY+ | Adaptive detection returns + sweeps + 4-fragment routing chain |
+| 33 | Quantum Ghost | EVENT HORIZON | Firewalled + alarmed core, Fibonacci keypad riddle, 3-shell onions |
+| 34 | Lazarus Core | EVENT HORIZON+ | Everything at once, 8 nodes, 2 attempts |
+| 35 | Zero Point | ZERO POINT | Final level: sweeps every 5, 90s trace, 4-shell onion, the twist |
+
+### Level 26 — Lazarus Seed `OMEGA`
+
+**Solution:** `LAZ4RUS_S33D_PURGE` · **User:** `lazarus_hunter` · **Detection:** 100, +25 · **Timer:** 240s · **Hint cost:** 10
+
+1. `login lazarus_hunter`; `scan`
+2. `connect seed-mirror-a` → `decrypt seed.atb` → `LAZ4RUS_`; `save LAZ4RUS_`
+3. `connect seed-mirror-b` → `decrypt seed.rail` (3 rails) → `S33D_`; `save S33D_`
+4. `connect audit-sink` (`wipe` here if you have taken detection), then `connect purge-console` (routing requires audit-sink first)
+5. `decrypt purge.hex` → `PURGE`; `save PURGE`; `combine 1 2 3`; `login LAZ4RUS_S33D_PURGE`
+
+### Level 27 — Onion Relay `OMEGA`
+
+**Solution:** `0N10N_TR4P_D00R` · **User:** `tor_exit_9` · **Detection:** 100, +25 · **Timer:** 240s · **Honeypot:** `directory-auth`
+
+1. `login tor_exit_9`; `scan`
+2. `connect middle-relay` → `decrypt frag1.oni` ×3 (base64 → reversed hex → hex) → `0N10N_`; `save`
+3. `connect hidden-service` → `decrypt knock.rail` → `knock exit-relay: 9001 9030 9050`
+4. `knock exit-relay 9001`, `knock exit-relay 9030`, `knock exit-relay 9050` → `connect exit-relay`
+5. `decrypt frag2.oni` ×2 → `TR4P_D00R`; `save`; `combine 1 2`; `login 0N10N_TR4P_D00R`
+
+### Level 28 — Sentinel Grid `OMEGA+`
+
+**Solution:** `S3NT1NEL_BL1ND_SP0T` · **User:** `grid_ghost` · **Detection:** 100, +20 · **Timer:** 270s · **Sweep:** every 6 · **Watched:** `watchtower`, `patrol-hub`
+
+1. `login grid_ghost`; `scan`
+2. `connect camera-loop` → `grep PIN cam.log` → digits reorder to **4471**
+3. `connect vault-door` → `decrypt blind.vig` → `BL1ND_`; `unlock spot.pin 4471` → `decrypt spot.pin` → `SP0T`
+4. Check `status`. Right after a sweep: `connect watchtower` → `decrypt watch.rail` → leave before the next sweep. → `S3NT1NEL_`
+5. Save in order and `combine`; `login S3NT1NEL_BL1ND_SP0T`. `patrol-hub` has nothing you need.
+
+### Level 29 — Silent Alarm `OMEGA+`
+
+**Solution:** `QU13T_H4NDS_0NLY` · **User:** `night_shift` · **Detection:** 100, +25 · **Timer:** 300s · **Tripwire:** `vault-core` 60s
+
+1. `login night_shift`; `scan`
+2. `connect security-office` → `grep keypad guard.log` → "straight down the middle column" = **2580**
+3. `connect locker-room` → `decrypt quiet.oni` ×2 → `QU13T_`; `connect server-closet` → `decrypt hands.rail` → `H4NDS_`
+4. `connect antechamber` → `bruteforce` → `cat door.locked`
+5. **Have everything saved first.** `connect vault-core` (60s trace starts) → `unlock only.pin 2580` → `decrypt only.pin` → `0NLY` → `save`, `combine`, `login QU13T_H4NDS_0NLY`
+
+### Level 30 — Mirror Maze `SINGULARITY`
+
+**Solution:** `M1RR0R_M4Z3_3X1T` · **User:** `maze_runner` · **Detection:** 110, +25 · **Timer:** 270s · **Honeypots:** `mirror-b`, `mirror-d`, `mirror-e` (not labelled)
+
+1. `login maze_runner`; `grep TTL=1 dns.log` → the 1-second-TTL mirrors are spoofed
+2. `scan`; `connect mirror-a` → `decrypt m1.oni` ×2 → `M1RR0R_`
+3. `connect mirror-c` → `decrypt maze.atb` → `M4Z3_`; `decrypt knock.oni` ×2 → `knock mirror-exit 4815 1623 4200`
+4. Knock all three → `connect mirror-exit` → `decrypt exit.rail` → `3X1T`
+5. `combine`; `login M1RR0R_M4Z3_3X1T`
+
+### Level 31 — Deadman's Vault `SINGULARITY`
+
+**Solution:** `D3ADM4N_SW1TCH_0FF` · **User:** `vault_warden` · **Detection:** 150, +25 · **Timer:** 270s · **Sweep:** every 7 · **Watched:** `heartbeat-mon` · **Honeypot:** `dead-drop`
+
+1. `login vault_warden`; `scan`; `connect warden-log` → `grep ACTIVE warden.log` → PIN **7719**
+2. `connect switch-room` → `bruteforce` → `decrypt switch.locked` ×2 → `SW1TCH_`; `unlock keyring.pin 7719` (intel)
+3. Time a quick visit to `heartbeat-mon` → `decrypt pulse.vig` → `D3ADM4N_`
+4. `connect vault-heart` (via switch-room) → `override` → `decrypt .heart_frag` → `0FF`
+5. Use `wipe` on warden-log *after* the bruteforce spike. Then `combine` in order and `login D3ADM4N_SW1TCH_0FF`
+
+### Level 32 — Hydra Botnet `SINGULARITY+`
+
+**Solution:** `HYDR4_H3ADS_SEVERED` · **User:** `hydra_slayer` · **Detection:** 120, +30 · **Timer:** 270s · **Sweep:** every 8 · **Adaptive** · **Honeypot:** `head-3`
+
+1. `login hydra_slayer`; `scan`
+2. `connect head-1` → `h1.hex` → `HYDR4_`; `connect head-2` (watched) → `h2.rail` → `H3ADS_`; `connect head-4` → `venom.oni` ×2 → `SEV`
+3. `connect c2-ledger` → `grep knock ledger.log` → `8080 4444 1337`; `wipe`
+4. Knock all three → `connect hydra-heart` → `override` → `decrypt .heart` → `ERED`
+5. `combine 1 2 3 4`; `login HYDR4_H3ADS_SEVERED`. Mix up your commands so you don't trigger the pattern penalty.
+
+### Level 33 — Quantum Ghost `EVENT HORIZON`
+
+**Solution:** `QU4NTUM_GH0ST_C0LL4PSE` · **User:** `observer_zero` · **Detection:** 120, +30 · **Timer:** 300s · **Sweep:** every 7 · **Tripwire:** `superposition` 75s · **Honeypot:** `schrodinger-box`
+
+1. `connect entangle-a` → `qa.oni` ×3 → `QU4NTUM_`
+2. `connect decoherence-log` → `grep knock q.log` (6626 1054 2998), `grep collapse q.log` (Fibonacci after 8 → 13, 21 → **1321**)
+3. Visit watched `entangle-b` between sweeps → `qb.oni` ×2 → `GH0ST_`
+4. Knock superposition, `connect superposition` (75s trace) → `unlock collapse.pin 1321` → `decrypt` ×2 → `C0LL4PSE`
+5. `combine`; `login QU4NTUM_GH0ST_C0LL4PSE`
+
+### Level 34 — Lazarus Core `EVENT HORIZON+`
+
+**Solution:** `L4ZARUS_N3VER_R1SES` · **User:** `final_witness` · **Detection:** 180, +30 · **Timer:** 300s · **Sweep:** every 6 · **Adaptive** · **Tripwire:** `lazarus-core` 60s · **Attempts:** 2
+
+1. `connect ossuary` → `grep DECOY lazarus.log` (crypt-mirror, ghost-choir), `grep gate lazarus.log` (knock + PIN riddle: the Architect fell on L25, so **2525**)
+2. `reliquary` (watched) → `relic.oni` ×3 → `L4ZARUS_`
+3. `resurrection-lab` (via reliquary) → `bruteforce` → `decrypt rebirth.locked` → `N3VER_`
+4. Knock `soul-gate` 1666 6661 6616 → `unlock gate.pin 2525` → `decrypt` → `R1`
+5. Wait for a sweep to pass, then `lazarus-core` (watched + alarmed) → `override` → `decrypt .core_frag` → `SES` → leave → `combine 1 2 3 4` → `login`
+
+### Level 35 — Zero Point `ZERO POINT` (final)
+
+**Solution:** `GH0ST_1S_TH3_ARCH1TECT` · **User:** `GHOST` (run `whoami`) · **Detection:** 200, +35 · **Timer:** 360s · **Sweep:** every 5 · **Adaptive** · **Tripwire:** `origin` 90s · **Attempts:** 2 · **Honeypots:** `memory-3`, `recursion`
+
+1. `login GHOST`; `connect memory-1` → `grep echo origin.log` (decoys), `grep gate origin.log` (knock 1010 0101 1111; PIN = 34 systems breached so far, typed twice = **3434**)
+2. `memory-2` is watched and the onion has **4 shells**. You can't do connect + 4 peels in 5 commands, so peel 3, leave, and come back for the 4th (peel progress is kept) → `GH0ST_`
+3. `memory-4` → `bruteforce` → `self.locked` → `1S_`; return to `memory-1` and `wipe`
+4. Knock origin-gate → `unlock core.pin 3434` → `decrypt` → `TH3_`
+5. `origin` (watched + 90s trace) → `override` → `decrypt .origin_frag` → leave → come back → `decrypt` again → `ARCH1TECT`
+6. `combine` in order → `login GH0ST_1S_TH3_ARCH1TECT` → **GAME COMPLETE**
 
 ---
 
@@ -829,6 +1254,28 @@ NovaTech Quantum's facility holds experiment BREACH. **First level requiring bot
 | 13    | Underground Market       | 35  | 12       | 24              | 36 *(lethal!)* | —    |
 | 14    | Quantum Research Lab     | 50  | 8        | 16              | 24            | 200s  |
 | 15    | GHOST Protocol           | 80  | 15       | 30              | 45            | 120s  |
+| 16    | Crypto Exchange Heist    | 80  | 20       | —               | —             | 240s  |
+| 17    | Industrial SCADA Sabotage| 70  | 25       | —               | —             | 240s  |
+| 18    | Telecom Backbone Hijack  | 70  | 20       | 40              | —             | 200s  |
+| 19    | Spy Satellite Imagery    | 60  | 30       | —               | —             | 200s  |
+| 20    | Forensic Counter-Hack    | 70  | 20       | —               | —             | 300s  |
+| 21    | Darknet Auction          | 130 | 20       | 40              | 60            | 240s  |
+| 22    | Black Site Dossier       | 80  | 25       | —               | —             | 180s  |
+| 23    | Pacemaker Killswitch     | 90  | 30       | —               | —             | 240s  |
+| 24    | Cobalt Mirage Showdown   | 200 | 30       | 60              | 90            | 180s  |
+| 25    | The Architect            | 260 | 40       | 80              | 120           | 120s  |
+| 26    | Lazarus Seed             | 100 | 25       | —               | —             | 240s  |
+| 27    | Onion Relay              | 100 | 25       | —               | —             | 240s  |
+| 28    | Sentinel Grid            | 100 | 20       | —               | —             | 270s  |
+| 29    | Silent Alarm             | 100 | 25       | 50              | —             | 300s (+60s trip) |
+| 30    | Mirror Maze              | 110 | 25       | —               | —             | 270s  |
+| 31    | Deadman's Vault          | 150 | 25       | 50              | 75            | 270s  |
+| 32    | Hydra Botnet             | 120 | 30       | —               | 90            | 270s  |
+| 33    | Quantum Ghost            | 120 | 30       | —               | —             | 300s (+75s trip) |
+| 34    | Lazarus Core             | 180 | 30       | 60              | 90            | 300s (+60s trip) |
+| 35    | Zero Point               | 200 | 35       | 70              | 105           | 360s (+90s trip) |
+
+*Honeypots (connect cost = 2× per-fail) appear on L21, L25, L27, L30–L35. Routing order is enforced on L17, L18, L23, L26, L29–L32, L34 and L35. Each sentinel sweep that catches you costs 1× per-fail, and `wipe` refunds 1× per-fail once per log host. For v4.0 every ceiling was re-checked so the mandatory bruteforce + override cost leaves room for at least one mistake (L21, L24 and L25 used to be unwinnable).*
 
 ---
 
@@ -836,7 +1283,7 @@ NovaTech Quantum's facility holds experiment BREACH. **First level requiring bot
 
 1. **Bump the level count** in `levels.h`:
    ```c
-   #define TOTAL_LEVELS 17
+   #define TOTAL_LEVELS 36
    ```
 
 2. **Add an `init_levelN()` function** in `levels.c`. Use the shorthand macros to define files:
@@ -886,6 +1333,10 @@ NovaTech Quantum's facility holds experiment BREACH. **First level requiring bot
    | `FLR(name, content)`| Public    | Yes       | Reverse    | Yes    |
    | `FB(name, content)`| Public     | Yes       | Binary     | No     |
 
+   Act IV macros: `FAT` (Atbash), `FRL(name, ct, rails)` (rail fence), `FON(name, ct, "b64>hex>atb")` (onion, with layers listed outermost first; tokens are `b64 hex rev bin atb rail:N caesar:N xor:KEY vig:KEY`), `FPIN(name, ct, type, shift, key, "1234")` (keypad), and `FLOCK` / `FHLOCK` (bruteforce/override-locked). Node markers that go after `add_node`: `mark_honeypot`, `route_after(l, "host")`, `mark_watched`, `mark_logs`, `set_trip(l, secs)`, `set_knock(l, "p1 p2 p3")`. Level fields: `sweep_interval`, `hint_cost`, `adaptive_detection`, plus `bf_node`/`bf_file` and `ov_node`/`ov_file` for bruteforce/override targets (commands.c no longer needs per-level code).
+
+   **Budget rule:** on levels that require both bruteforce and override, keep `detection_max` above `5 × detection_per_fail`.
+
 3. **Call it from `init_levels()`** in `levels.c`:
    ```c
    void init_levels(void) {
@@ -902,5 +1353,35 @@ NovaTech Quantum's facility holds experiment BREACH. **First level requiring bot
 
 ---
 
+## Technical Notes
 
-*Terminal Breach v2.0 — All 16 levels tested end-to-end. Zero compiler warnings.*
+- Written in **C11**, compiled with GCC. No external libraries — only `stdio.h`, `string.h`, `stdlib.h`, `time.h`, `unistd.h`.
+- All ANSI colour codes are inline escape sequences — works on any standard terminal.
+- Level data is stored in a static array of `Level` structs initialized at startup. Level structs are **immutable** during play — file decryption state is tracked in `GameState` bitmask arrays, not in the Level struct itself. This allows clean level resets without re-initializing level data.
+- The detection system uses integer arithmetic — no floats anywhere in the game.
+- `slow_print()` uses `nanosleep()` for character-by-character output with configurable delay.
+- Save file (`terminal_breach.sav`) is plain text key=value format — human readable and editable. The v3 format adds per-level scores.
+- **Practice / testing:** `TB_START_LEVEL=26 ./terminal_breach` jumps straight to a level, and `TB_FAST=1` turns off the typewriter delays. Every sequence in WALKTHROUGH.md is run this way, and the whole 35-level game has been completed in a single session (35/35, 0 fails, GHOST LEGEND).
+
+---
+
+## Changelog v4.0
+
+New: levels 26–35, seven new mechanics, four new commands, a live timer/trace countdown in the prompt, `MAX_NODES` raised from 6 to 8, and inventory raised from 20 to 30 slots.
+
+Bug fixes:
+- **`loadgame` skipped a level.** It resumed at *saved level + 1*. It now restarts the saved level.
+- **`loadgame` duplicated the inventory** every time it ran, and trusted out-of-range `LEVEL=` values (array overrun). Both are fixed, and per-level scores are now saved so the win-screen breakdown survives a reload.
+- **Routing state leaked between levels.** `nodes_connected` was never reset, so on later levels a route requirement could be skipped if node indices happened to line up. The adaptive-detection streak is now reset too.
+- **Bruteforce soft-lock.** Running `bruteforce` on the wrong host used up its single use, which left L5/L13/L14/L15/L21/L24/L25 unwinnable. It's now refused without being used up.
+- **Unwinnable detection budgets** on L21 (bruteforce + override hit the 100 cap exactly), L24 (150 vs 100) and L25 (200 vs 120).
+- **L23 pacemaker-net** was named in the briefing, hint and topology but didn't exist. It's now the last hop of the routing chain.
+- **A routing rejection printed "CONNECTION ESTABLISHED"** before refusing. The checks now run first.
+- The adaptive-detection hash relied on signed overflow (undefined behaviour). It's now unsigned.
+- The 20-slot inventory filled up for good around L20 with no way to clear it. The inventory is now cleared at each level transition, raised to 30 slots, and `drop` removes single slots.
+- The level-transition banner never announced `grep`, `combine`, `hint` or `logout` unlocks.
+- Outdated text: L8 was named "[FINAL]", the boot screen said "Seven targets", the banner said v2.0, and the win screen said "All 25 systems".
+
+---
+
+*Terminal Breach v4.0 — Levels 26–35 and every bruteforce/override level tested end-to-end with scripted playthroughs. Zero compiler warnings.*
